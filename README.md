@@ -56,7 +56,7 @@ Compose binds its host ports to `127.0.0.1`. Its default database password and A
 
 ## Screenshots
 
-These are screenshots of the real React interface rendered with **illustrative sample scan data**. Generate them again with `npm run screenshots` in `frontend/` while the frontend dev server is running. The script uses system Chromium, or the executable set by `CHROMIUM_PATH`.
+These 1920 × 1080 wallpaper-size screenshots show the original Zorix red/black visual style on the working React interface, rendered with **illustrative sample scan data**. Generate them again with `npm run screenshots` in `frontend/` while the frontend dev server is running. The script uses system Chromium, or the executable set by `CHROMIUM_PATH`.
 
 <table>
 <tr>
@@ -69,7 +69,7 @@ These are screenshots of the real React interface rendered with **illustrative s
 </tr>
 <tr>
 <td><img src="docs/screenshots/05-file-scan-form.png" alt="Single-file scan form"><br><b>Single-file mode.</b> A relative file path and optional GitHub token.</td>
-<td><img src="docs/screenshots/06-mobile-evidence.png" alt="Zorix evidence view at phone width" width="260"><br><b>Phone width.</b> The same evidence and review controls in a narrow layout.</td>
+<td><img src="docs/screenshots/06-scan-history.png" alt="Zorix historical scan evidence in red dashboard"><br><b>Historical scan.</b> Select an earlier pinned scan and inspect its evidence.</td>
 </tr>
 </table>
 

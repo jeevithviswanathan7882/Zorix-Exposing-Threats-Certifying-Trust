@@ -1,1 +1,15 @@
-/* Global styles are defined in App.css for the current application. */
+@import '@fontsource/bebas-neue/latin-400.css';
+@import '@fontsource/rajdhani/latin-400.css';
+@import '@fontsource/rajdhani/latin-500.css';
+@import '@fontsource/rajdhani/latin-600.css';
+@import '@fontsource/rajdhani/latin-700.css';
+@import '@fontsource/share-tech-mono/latin-400.css';
+
+:root{font-family:'Rajdhani',sans-serif;color:#f0f0f0;background:#000;font-synthesis:none;scroll-behavior:smooth}
+*{box-sizing:border-box}
+body{margin:0;min-width:320px}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+button:disabled{cursor:not-allowed;opacity:.55}
+::selection{background:#e8001d;color:#fff}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#080808}::-webkit-scrollbar-thumb{background:#e8001d}

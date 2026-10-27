@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -32,13 +32,13 @@ const browser = await chromium.launch({
 })
 
 try {
-  const publicContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })
+  const publicContext = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, reducedMotion: 'reduce' })
   const signIn = await publicContext.newPage()
   await signIn.goto(baseUrl, { waitUntil: 'networkidle' })
-  await signIn.screenshot({ path: path.join(outputDir, '01-sign-in.png'), fullPage: true })
+  await signIn.screenshot({ path: path.join(outputDir, '01-sign-in.png') })
   await publicContext.close()
 
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, reducedMotion: 'reduce' })
   await context.addInitScript(() => {
     localStorage.setItem('zorix_token', 'screenshot-demo-token')
     localStorage.setItem('zorix_email', 'analyst@example.com')
@@ -67,35 +67,26 @@ try {
   const page = await context.newPage()
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
   await page.getByText('Potential command injection via os.system()').waitFor()
-  await page.screenshot({ path: path.join(outputDir, '02-scan-overview.png'), fullPage: true })
-  await page.locator('.details').screenshot({ path: path.join(outputDir, '03-finding-review.png') })
+  await page.screenshot({ path: path.join(outputDir, '02-scan-overview.png') })
+  await page.getByLabel('Review status').first().selectOption('investigating')
+  await page.getByLabel('Review note').first().fill('Tracing user input to the command boundary.')
+  await page.locator('.details').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: path.join(outputDir, '03-finding-review.png') })
 
   await page.getByLabel('Compare with a scan of this repository').selectOption(scans[1].id)
   await page.getByRole('button', { name: 'Compare findings' }).click()
   await page.getByText('1 introduced · 0 resolved · 1 unchanged').waitFor()
-  await page.locator('.details').screenshot({ path: path.join(outputDir, '04-scan-comparison.png') })
+  await page.screenshot({ path: path.join(outputDir, '04-scan-comparison.png') })
 
   await page.getByLabel('Scan scope').selectOption('file')
-  await page.locator('.scan-form').screenshot({ path: path.join(outputDir, '05-file-scan-form.png') })
+  await page.locator('.scan-form').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: path.join(outputDir, '05-file-scan-form.png') })
+  await page.getByRole('button', { name: /completed · 12 file\(s\) · 1 potential finding\(s\)/ }).click()
+  await page.locator('.details').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: path.join(outputDir, '06-scan-history.png') })
   await context.close()
 
-  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
-  await mobileContext.addInitScript(() => {
-    localStorage.setItem('zorix_token', 'screenshot-demo-token')
-    localStorage.setItem('zorix_email', 'analyst@example.com')
-  })
-  await mobileContext.route('**/api/**', async route => {
-    const pathname = new URL(route.request().url()).pathname
-    const response = pathname === '/api/analysis/results'
-      ? { results: scans, total: scans.length }
-      : { reviews: [] }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) })
-  })
-  const mobile = await mobileContext.newPage()
-  await mobile.goto(baseUrl, { waitUntil: 'networkidle' })
-  await mobile.getByText('Potential command injection via os.system()').waitFor()
-  await mobile.screenshot({ path: path.join(outputDir, '06-mobile-evidence.png'), fullPage: true })
-  await mobileContext.close()
+  await rm(path.join(outputDir, '06-mobile-evidence.png'), { force: true })
 } finally {
   await browser.close()
 }

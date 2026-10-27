@@ -165,7 +165,9 @@ export default function App() {
   if (!token) return (
     <div className="auth-screen">
       <div className="auth-card">
-        <div className="brand">ZORIX<span> / SECURITY VALIDATION</span></div>
+        <div className="brand">ZOR<span>IX</span></div>
+        <div className="brand-caption">// SECURITY VALIDATION</div>
+        <div className="auth-kicker">SECURE ACCESS / 01</div>
         <h1>{registering ? 'Create an account' : 'Sign in'}</h1>
         <p>Inspect GitHub source with real static analysis and review the evidence.</p>
         <form onSubmit={signIn}>
@@ -183,21 +185,30 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">ZORIX<span> / SECURITY VALIDATION</span></div>
-        <div className="account"><span>{email}</span><button className="text-button" onClick={signOut}>Sign out</button></div>
-      </header>
-      <main>
+      <aside className="sidebar">
+        <div className="sidebar-brand"><div className="brand">ZOR<span>IX</span></div><div className="brand-caption">// SECURITY VALIDATION</div></div>
+        <nav aria-label="Main navigation">
+          <span className="nav-caption">// CORE</span>
+          <a href="#overview" className="nav-link active"><span aria-hidden="true">◈</span> Dashboard</a>
+          <a href="#new-scan" className="nav-link"><span aria-hidden="true">⌕</span> New scan</a>
+          <a href="#scan-history" className="nav-link"><span aria-hidden="true">▤</span> Scan history <b>{scans.length}</b></a>
+          <a href="#evidence" className="nav-link"><span aria-hidden="true">◇</span> Evidence</a>
+        </nav>
+        <div className="sidebar-account"><span className="nav-caption">// ANALYST</span><strong>{email.split('@')[0]}</strong><small>{email}</small><button className="text-button" onClick={signOut}>⏻ Sign out</button></div>
+      </aside>
+      <div className="workspace">
+      <header className="topbar"><div><span className="eyebrow">// ZORIX / WORKSPACE</span><strong>DASHBOARD</strong></div><div className="topbar-right"><span className="engine-badge"><i /> SEMGREP ANALYSIS</span><span className="account-email">{email}</span></div></header>
+      <main id="overview">
         <div className="intro">
-          <div><span className="eyebrow">Repository analysis</span><h1>Review evidence. Verify risk.</h1>
+          <div><span className="eyebrow">// REPOSITORY ANALYSIS</span><h1>EXPOSE THREATS. <em>CERTIFY TRUST.</em></h1>
           <p>Scan a bounded GitHub repository or one source file with Semgrep. Findings are potential issues, not confirmed exploits or CVSS scores.</p></div>
-          <div className="count"><strong>{scans.length}</strong><span>your scans</span></div>
+          <div className="count"><span>TOTAL SCANS</span><strong>{String(scans.length).padStart(2, '0')}</strong><span>YOUR WORKSPACE</span></div>
         </div>
         {error && <div className="error" role="alert">{error}</div>}
         {notice && <div className="notice" role="status">{notice}</div>}
-        <section className="panel">
+        <section className="panel" id="new-scan">
           <h2>New scan</h2>
-          <form className="scan-form" onSubmit={startScan}>
+          <form className={`scan-form ${scanScope === 'file' ? 'file-scope' : ''}`} onSubmit={startScan}>
             <label>Scan scope<select value={scanScope} onChange={e => setScanScope(e.target.value as 'repository' | 'file')}>
               <option value="repository">Repository at pinned commit</option>
               <option value="file">One source file</option>
@@ -209,7 +220,7 @@ export default function App() {
           </form>
         </section>
         <div className="columns">
-          <section className="panel runs"><h2>Scan history</h2>
+          <section className="panel runs" id="scan-history"><h2>Scan history</h2>
             {scans.length === 0 ? <p className="muted">No scans yet.</p> : scans.map(scan => (
               <button key={scan.id} className={`run ${selected?.id === scan.id ? 'active' : ''}`} onClick={() => setSelected(scan)}>
                 <strong>{scan.affected_file}</strong><span>{scan.repository}</span>
@@ -217,7 +228,7 @@ export default function App() {
               </button>
             ))}
           </section>
-          <section className="panel details"><h2>Evidence</h2>
+          <section className="panel details" id="evidence"><h2>Evidence</h2>
             {selected ? <>
               <p className="muted">Scan ID: {selected.id}</p>
               {selected.commit_sha && <p className="muted">Commit: <code>{selected.commit_sha}</code></p>}
@@ -264,6 +275,7 @@ export default function App() {
         </div>
       </main>
       <footer>Static analysis only · Assess repositories you are authorized to review · Manual verification required</footer>
+      </div>
     </div>
   )
 }
