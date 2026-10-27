@@ -100,6 +100,13 @@ def test_repository_semgrep_preserves_relative_paths(monkeypatch):
     assert any(item["file"] == "src/app.py" for item in result["findings"])
 
 
+def test_sarif_rejects_failed_scan():
+    from backend.services.sarif_export import build_sarif
+
+    with pytest.raises(ValueError, match="completed"):
+        build_sarif({"status": "error", "findings": []})
+
+
 def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
     async def scenario():
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
@@ -167,11 +174,19 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert other_results.json()["total"] == 0
                 assert (await client.get(f"/api/analysis/results/{scan_id}", headers=bob)).status_code == 404
                 assert (await client.get(f"/api/analysis/reports/{scan_id}/html", headers=bob)).status_code == 404
+                assert (await client.get(f"/api/analysis/reports/{scan_id}/sarif", headers=bob)).status_code == 404
                 report = await client.get(f"/api/analysis/reports/{scan_id}/html", headers=alice)
                 assert report.status_code == 200
                 assert b"Manual review" in report.content or b"manual review" in report.content
                 assert b"&lt;script&gt;" in report.content
                 assert b"<script>" not in report.content
+                sarif = await client.get(f"/api/analysis/reports/{scan_id}/sarif", headers=alice)
+                assert sarif.status_code == 200
+                assert sarif.json()["version"] == "2.1.0"
+                sarif_result = sarif.json()["runs"][0]["results"][0]
+                assert sarif_result["ruleId"] == "os-system-call"
+                assert sarif_result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "app.py"
+                assert (await client.get(f"/api/analysis/reports/{repository_scan.json()['analysis_id']}/sarif", headers=alice)).json()["runs"][0]["results"] == []
                 assert (await client.get("/api/admin/ollama-prompts", headers=alice)).status_code == 404
         finally:
             app.dependency_overrides.clear()

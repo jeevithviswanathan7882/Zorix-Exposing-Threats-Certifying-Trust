@@ -6,7 +6,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from backend.api.deps import get_current_user
 from backend.database import get_db
 from backend.models import AnalysisResult, BugReport, Project, Report, ScanResult, User
 from backend.services.pipeline_orchestrator import VulnerabilityPipeline
+from backend.services.sarif_export import build_sarif
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -184,8 +185,22 @@ async def get_report(
     user: User = Depends(get_current_user),
 ):
     await _owned_analysis(db, user, analysis_id)
+    if format == "sarif":
+        scan = (await db.execute(select(ScanResult).where(
+            ScanResult.analysis_result_id == analysis_id
+        ))).scalar_one_or_none()
+        if scan is None:
+            raise HTTPException(status_code=404, detail="Scan evidence not found")
+        try:
+            artifact = build_sarif(json.loads(scan.scan_output))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(
+            artifact, media_type="application/sarif+json",
+            headers={"Content-Disposition": f'attachment; filename="zorix_{analysis_id}.sarif"'},
+        )
     if format != "html":
-        raise HTTPException(status_code=404, detail="Only HTML reports are available")
+        raise HTTPException(status_code=404, detail="Available formats: html, sarif")
     report = (await db.execute(select(Report).where(
         Report.analysis_result_id == analysis_id, Report.report_format == "html"
     ))).scalar_one_or_none()

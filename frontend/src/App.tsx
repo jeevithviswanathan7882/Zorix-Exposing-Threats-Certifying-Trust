@@ -94,17 +94,17 @@ export default function App() {
     finally { setBusy(false) }
   }
 
-  const downloadReport = async (id: string) => {
+  const downloadReport = async (id: string, format: 'html' | 'sarif') => {
     setError('')
     try {
-      const response = await fetch(`${API}/analysis/reports/${id}/html`, {
+      const response = await fetch(`${API}/analysis/reports/${id}/${format}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!response.ok) throw new Error(`Report request failed (${response.status})`)
       const url = URL.createObjectURL(await response.blob())
       const link = document.createElement('a')
       link.href = url
-      link.download = `zorix-${id}.html`
+      link.download = `zorix-${id}.${format}`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) { setError((err as Error).message) }
@@ -175,7 +175,8 @@ export default function App() {
               <p className="muted">Scan ID: {selected.id}</p>
               {selected.commit_sha && <p className="muted">Commit: <code>{selected.commit_sha}</code></p>}
               <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
-              <button className="secondary" onClick={() => void downloadReport(selected.id)}>Download HTML report</button>
+              <button className="secondary" onClick={() => void downloadReport(selected.id, 'html')}>Download HTML report</button>
+              {selected.status === 'completed' && <button className="secondary" onClick={() => void downloadReport(selected.id, 'sarif')}>Download SARIF</button>}
               {selected.findings.length === 0 ? <p className="muted">No findings recorded. This does not prove the file is secure.</p> :
                 selected.findings.map((finding, index) => <article className="finding" key={`${finding.rule_id}-${index}`}>
                   <div><span className="tag">{finding.severity}</span><strong>{finding.rule_id}</strong></div>

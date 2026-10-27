@@ -33,6 +33,7 @@ describe('Zorix frontend', () => {
     await waitFor(() => expect(screen.getByText('Potential command injection')).toBeTruthy())
     expect(screen.getByText('Not performed')).toBeTruthy()
     expect(screen.getByText('os-system-call')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Download SARIF' })).toBeTruthy()
   })
 
   it('submits a pinned repository scan by default', async () => {
