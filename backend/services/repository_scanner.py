@@ -87,7 +87,10 @@ async def fetch_repository_snapshot(owner: str, repo: str, token: str | None = N
             blob = await get_json(f"{root}/git/blobs/{sha}")
             if blob.get("encoding") != "base64" or blob.get("sha") != sha:
                 raise ValueError("GitHub returned an unexpected blob")
-            content = base64.b64decode(blob.get("content", ""), validate=True)
+            encoded = blob.get("content", "")
+            if not isinstance(encoded, str):
+                raise ValueError("GitHub returned invalid blob content")
+            content = base64.b64decode("".join(encoded.split()), validate=True)
             if len(content) > MAX_FILE_BYTES:
                 raise ValueError("GitHub blob exceeds the file limit")
             files[path] = content.decode("utf-8", errors="replace")

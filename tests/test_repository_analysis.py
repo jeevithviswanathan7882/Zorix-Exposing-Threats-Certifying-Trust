@@ -67,7 +67,7 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
             ]})
         if request.url.path.endswith(f"/git/blobs/{blob_sha}"):
             return httpx.Response(200, json={"sha": blob_sha, "encoding": "base64",
-                                             "content": base64.b64encode(b"print('hello')\n").decode()})
+                                             "content": base64.b64encode(b"print('hello')\n").decode() + "\n"})
         return httpx.Response(404)
 
     client_type = httpx.AsyncClient
