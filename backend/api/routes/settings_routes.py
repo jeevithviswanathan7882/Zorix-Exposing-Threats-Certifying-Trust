@@ -12,6 +12,8 @@ from backend.models import (
     AppSetting, Analysis, AnalysisResult, VulnerabilityScore, Report,
 )
 from backend.config import get_settings
+from backend.api.deps import require_admin
+from backend.models import User
 
 router = APIRouter(tags=["settings"])
 settings = get_settings()
@@ -25,7 +27,7 @@ def _mask(val: str) -> str:
 
 
 @router.get("/settings")
-async def get_current_settings(db: AsyncSession = Depends(get_db)):
+async def get_current_settings(db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
     """Get current application settings (sensitive values masked)."""
     # Read overrides from DB
     stmt = select(AppSetting)
@@ -82,7 +84,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.patch("/settings")
-async def update_settings(update: SettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_settings(update: SettingsUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
     """Update application settings."""
     updates = update.model_dump(exclude_none=True)
 
@@ -101,7 +103,7 @@ async def update_settings(update: SettingsUpdate, db: AsyncSession = Depends(get
 
 
 @router.get("/stats")
-async def get_stats(db: AsyncSession = Depends(get_db)):
+async def get_stats(db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
     """Get dashboard statistics."""
     # Total analyses
     total_stmt = select(func.count(Analysis.id))

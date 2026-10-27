@@ -1,172 +1,181 @@
-import { useState, useEffect, useRef } from 'react'
-import Dashboard from './pages/Dashboard'
-import Vulnerabilities from './pages/Vulnerabilities'
-import Reports from './pages/Reports'
-import Analysis from './pages/Analysis'
-import AdminPanel from './pages/AdminPanel'
-import Analytics from './pages/Analytics'
-import Patches from './pages/Patches'
-import Settings from './pages/Settings'
-import Login from './pages/Login'
+import { FormEvent, useCallback, useEffect, useState } from 'react'
+import './App.css'
 
-function UserAccountSection({ onLogout }: { onLogout: () => void }) {
-  const email = localStorage.getItem('user_email') || 'Not logged in'
-  const role = localStorage.getItem('user_role') || 'admin'
-  const initials = email
-    .split('@')[0]
-    .split('.')
-    .map(p => p[0]?.toUpperCase())
-    .join('')
-    .slice(0, 2) || 'XX'
-
-  return (
-    <div style={{ padding: '18px 22px', borderTop: '1px solid rgba(232,0,29,.12)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 3, border: '1px solid rgba(232,0,29,.15)', background: 'rgba(232,0,29,.04)' }}>
-        <div style={{ width: 36, height: 36, borderRadius: 3, background: '#e8001d', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Bebas Neue',sans-serif", fontSize: 14, color: '#fff', fontWeight: 700 }}>{initials}</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#f0f0f0' }}>{email.split('@')[0]}</div>
-          <div style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 9, color: '#00ff64', letterSpacing: 1, textTransform: 'uppercase' }}>{role.toUpperCase()}</div>
-        </div>
-      </div>
-      <button
-        onClick={onLogout}
-        style={{ width: '100%', marginTop: 10, fontFamily: "'Share Tech Mono',monospace", fontSize: 10, letterSpacing: 2, padding: '8px 0', border: '1px solid rgba(232,0,29,.25)', background: 'rgba(232,0,29,.06)', color: '#e8001d', cursor: 'pointer', borderRadius: 2, textTransform: 'uppercase', transition: 'all .2s' }}
-      >
-        ⏻ Logout
-      </button>
-    </div>
-  )
+type Finding = { rule_id: string; file: string; line: number | null; severity: string; message: string }
+type Scan = {
+  id: string
+  repository: string
+  affected_file: string
+  status: string
+  finding_count: number
+  findings: Finding[]
+  created_at: string
 }
+type ScanResponse = { status: string; error?: string; findings: Finding[]; analysis_id: string }
 
-type Tab = 'dashboard' | 'vulnerabilities' | 'reports' | 'analysis' | 'analytics' | 'patches' | 'settings' | 'admin'
+const API = '/api'
 
-const NAV = [
-  { key: 'dashboard',      label: 'Dashboard',      icon: 'Γ¼í' },
-  { key: 'vulnerabilities',label: 'Verifications',  icon: 'ΓùÄ', badge: 12 },
-  { key: 'reports',        label: 'Reports',        icon: 'Γëí' },
-  { key: 'analysis',       label: 'Analysis',       icon: '🔍' },
-  { key: 'admin',          label: 'Admin Panel',    icon: '⚙️' },
-  { key: 'analytics',      label: 'Analytics',      icon: 'Γƒí' },
-  { key: 'patches',        label: 'Patches',        icon: 'Γè₧' },
-  { key: 'settings',       label: 'Settings',       icon: 'ΓÜÖ' },
-]
+async function request<T>(path: string, token?: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`)
+  return body as T
+}
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'))
-  const [tab, setTab] = useState<Tab>('dashboard')
-  const curRef  = useRef<HTMLDivElement>(null)
-  const curRRef = useRef<HTMLDivElement>(null)
+  const [token, setToken] = useState(localStorage.getItem('zorix_token') || '')
+  const [email, setEmail] = useState(localStorage.getItem('zorix_email') || '')
+  const [password, setPassword] = useState('')
+  const [registering, setRegistering] = useState(false)
+  const [repoUrl, setRepoUrl] = useState('')
+  const [affectedFile, setAffectedFile] = useState('')
+  const [scans, setScans] = useState<Scan[]>([])
+  const [selected, setSelected] = useState<Scan | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
-  useEffect(() => {
-    let rx = 0, ry = 0, mx = 0, my = 0
-    const move = (e: MouseEvent) => {
-      mx = e.clientX; my = e.clientY
-      if (curRef.current) { curRef.current.style.left = mx + 'px'; curRef.current.style.top = my + 'px' }
+  const loadScans = useCallback(async (preferLatest = false) => {
+    if (!token) return
+    try {
+      const data = await request<{ results: Scan[] }>('/analysis/results', token)
+      setScans(data.results)
+      setSelected(current => (preferLatest ? data.results[0] : data.results.find(item => item.id === current?.id) || data.results[0]) || null)
+    } catch (err) {
+      setError((err as Error).message)
     }
-    const animate = () => {
-      rx += (mx - rx) * 0.15; ry += (my - ry) * 0.15
-      if (curRRef.current) { curRRef.current.style.left = rx + 'px'; curRRef.current.style.top = ry + 'px' }
-      requestAnimationFrame(animate)
-    }
-    document.addEventListener('mousemove', move)
-    const id = requestAnimationFrame(animate)
-    return () => { document.removeEventListener('mousemove', move); cancelAnimationFrame(id) }
-  }, [])
+  }, [token])
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user_email')
-    localStorage.removeItem('user_role')
-    setIsLoggedIn(false)
+  useEffect(() => { void loadScans() }, [loadScans])
+
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true); setError(''); setNotice('')
+    try {
+      if (registering) await request('/auth/register', undefined, {
+        method: 'POST', body: JSON.stringify({ email, password }),
+      })
+      const data = await request<{ access_token: string }>('/auth/login', undefined, {
+        method: 'POST', body: JSON.stringify({ email, password }),
+      })
+      localStorage.setItem('zorix_token', data.access_token)
+      localStorage.setItem('zorix_email', email)
+      setToken(data.access_token)
+      setPassword('')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
   }
 
-  const handleLoginSuccess = () => {
-    localStorage.setItem('user_role', 'admin')
-    setIsLoggedIn(true)
+  const startScan = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const result = await request<ScanResponse>('/analysis/analyze', token, {
+        method: 'POST',
+        body: JSON.stringify({ repo_url: repoUrl, affected_file: affectedFile }),
+      })
+      await loadScans(true)
+      setNotice(result.status === 'completed'
+        ? `Scan complete: ${result.findings.length} potential finding(s). Review the evidence before reporting.`
+        : `Scan ${result.status}: ${result.error || 'Check scanner configuration.'}`)
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
   }
 
-  if (!isLoggedIn) {
-    return <Login onLoginSuccess={handleLoginSuccess} />
+  const downloadReport = async (id: string) => {
+    setError('')
+    try {
+      const response = await fetch(`${API}/analysis/reports/${id}/html`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) throw new Error(`Report request failed (${response.status})`)
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `zorix-${id}.html`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) { setError((err as Error).message) }
   }
+
+  const signOut = () => {
+    localStorage.removeItem('zorix_token')
+    localStorage.removeItem('zorix_email')
+    setToken(''); setScans([]); setSelected(null); setError('')
+  }
+
+  if (!token) return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="brand">ZORIX<span> / SECURITY VALIDATION</span></div>
+        <h1>{registering ? 'Create an account' : 'Sign in'}</h1>
+        <p>Inspect GitHub source with real static analysis and review the evidence.</p>
+        <form onSubmit={signIn}>
+          <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>
+          <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} minLength={registering ? 8 : 1} required /></label>
+          {error && <div className="error" role="alert">{error}</div>}
+          <button disabled={busy}>{busy ? 'Working…' : registering ? 'Register and sign in' : 'Sign in'}</button>
+        </form>
+        <button className="text-button" onClick={() => { setRegistering(!registering); setError('') }}>
+          {registering ? 'Already have an account? Sign in' : 'New here? Create an account'}
+        </button>
+      </div>
+    </div>
+  )
 
   return (
-    <div style={{ display:'flex', minHeight:'100vh', position:'relative', zIndex:1 }}>
-      {/* BG Effects */}
-      <div className="radial-bg" style={{ position:'fixed', inset:0, zIndex:0, overflow:'hidden' }} />
-      <div className="grid-bg" />
-      <div className="scan-line" />
-      <div id="cur" ref={curRef} />
-      <div id="curR" ref={curRRef} />
-
-      {/* SIDEBAR */}
-      <aside style={{ width:220, minHeight:'100vh', flexShrink:0, background:'rgba(6,6,6,.97)', borderRight:'1px solid rgba(232,0,29,.18)', display:'flex', flexDirection:'column', position:'sticky', top:0, height:'100vh', zIndex:10 }}>
-        <div style={{ padding:'30px 22px 26px', borderBottom:'1px solid rgba(232,0,29,.1)' }}>
-          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:40, letterSpacing:8, color:'#fff', lineHeight:1, textShadow:'0 0 10px rgba(232,0,29,.8),0 0 30px rgba(232,0,29,.5)' }}>
-            ZOR<span style={{ color:'#e8001d' }}>IX</span>
-          </div>
-          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:'#e8001d', letterSpacing:2, textTransform:'uppercase', marginTop:5, opacity:.7 }}>// AI Security Validation</div>
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand">ZORIX<span> / SECURITY VALIDATION</span></div>
+        <div className="account"><span>{email}</span><button className="text-button" onClick={signOut}>Sign out</button></div>
+      </header>
+      <main>
+        <div className="intro">
+          <div><span className="eyebrow">Repository analysis</span><h1>Review evidence. Verify risk.</h1>
+          <p>Scan a specific GitHub source file with Semgrep. Findings are potential issues, not confirmed exploits or CVSS scores.</p></div>
+          <div className="count"><strong>{scans.length}</strong><span>your scans</span></div>
         </div>
-
-        <nav style={{ padding:'18px 0', flex:1 }}>
-          <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, letterSpacing:3, color:'#555', textTransform:'uppercase', padding:'14px 22px 6px' }}>// Core</div>
-          {NAV.map((item) => (
-            <div key={item.key} onClick={() => setTab(item.key as Tab)} style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 22px', cursor:'pointer', borderLeft: tab===item.key ? '3px solid #e8001d' : '3px solid transparent', fontSize:15, fontWeight:600, letterSpacing:.5, textTransform:'uppercase', color: tab===item.key ? '#fff' : '#888', background: tab===item.key ? 'rgba(232,0,29,.1)' : 'transparent', transition:'all .22s' }}>
-              <span style={{ fontSize:17, width:20, textAlign:'center' }}>{item.icon}</span>
-              {item.label}
-              {item.badge && <span style={{ marginLeft:'auto', background:'#e8001d', color:'#fff', fontFamily:"'Share Tech Mono',monospace", fontSize:10, padding:'2px 8px', borderRadius:2 }}>{item.badge}</span>}
-            </div>
-          ))}
-        </nav>
-
-        <UserAccountSection onLogout={handleLogout} />
-      </aside>
-
-      {/* MAIN */}
-      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-        {/* HEADER */}
-        <div style={{ height:64, background:'rgba(6,6,6,.92)', backdropFilter:'blur(20px)', borderBottom:'1px solid rgba(232,0,29,.18)', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 34px', position:'sticky', top:0, zIndex:100 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:18 }}>
-            <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:4, color:'#fff', textTransform:'uppercase' }}>
-              {NAV.find(n => n.key === tab)?.label || 'Dashboard'}
-            </div>
-            <div style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 14px', border:'1px solid rgba(0,255,100,.22)', background:'rgba(0,255,100,.04)', borderRadius:2 }}>
-              <div style={{ width:7, height:7, borderRadius:'50%', background:'#00ff64', boxShadow:'0 0 8px #00ff64', animation:'livePulse 1.2s infinite' }} />
-              <span style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:'#00ff64', letterSpacing:2 }}>LIVE</span>
-            </div>
-          </div>
-
-          <div style={{ display:'flex', gap:2, background:'rgba(12,12,12,.8)', border:'1px solid rgba(232,0,29,.15)', borderRadius:3, padding:3 }}>
-            {(['dashboard','vulnerabilities','reports','analysis'] as Tab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)} style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:11, letterSpacing:2, padding:'7px 18px', cursor:'pointer', border:'none', borderRadius:2, textTransform:'uppercase', background: tab===t ? '#e8001d' : 'transparent', color: tab===t ? '#fff' : '#888', transition:'all .2s' }}>
-                {t === 'dashboard' ? 'Dashboard' : t === 'vulnerabilities' ? 'Verifications' : t === 'reports' ? 'Reports' : 'Analysis'}
+        {error && <div className="error" role="alert">{error}</div>}
+        {notice && <div className="notice" role="status">{notice}</div>}
+        <section className="panel">
+          <h2>New scan</h2>
+          <form className="scan-form" onSubmit={startScan}>
+            <label>GitHub repository URL<input type="url" placeholder="https://github.com/owner/repository" value={repoUrl} onChange={e => setRepoUrl(e.target.value)} required /></label>
+            <label>Affected file path<input placeholder="app/auth.py" value={affectedFile} onChange={e => setAffectedFile(e.target.value)} required /></label>
+            <button disabled={busy}>{busy ? 'Scanning…' : 'Run static scan'}</button>
+          </form>
+        </section>
+        <div className="columns">
+          <section className="panel runs"><h2>Scan history</h2>
+            {scans.length === 0 ? <p className="muted">No scans yet.</p> : scans.map(scan => (
+              <button key={scan.id} className={`run ${selected?.id === scan.id ? 'active' : ''}`} onClick={() => setSelected(scan)}>
+                <strong>{scan.affected_file}</strong><span>{scan.repository}</span>
+                <small>{scan.status} · {scan.finding_count} potential finding(s) · {new Date(scan.created_at).toLocaleString()}</small>
               </button>
             ))}
-          </div>
-
-          <div style={{ display:'flex', gap:8 }}>
-            {['≡ƒöì','≡ƒöö'].map((icon, i) => (
-              <div key={i} style={{ width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', border:'1px solid rgba(232,0,29,.18)', borderRadius:3, background:'rgba(232,0,29,.04)', cursor:'pointer', fontSize:18, position:'relative' }}>
-                {icon}
-                {i===1 && <div style={{ position:'absolute', top:6, right:6, width:7, height:7, background:'#e8001d', borderRadius:'50%', border:'1.5px solid #000' }} />}
-              </div>
-            ))}
-          </div>
+          </section>
+          <section className="panel details"><h2>Evidence</h2>
+            {selected ? <>
+              <p className="muted">Scan ID: {selected.id}</p>
+              <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
+              <button className="secondary" onClick={() => void downloadReport(selected.id)}>Download HTML report</button>
+              {selected.findings.length === 0 ? <p className="muted">No findings recorded. This does not prove the file is secure.</p> :
+                selected.findings.map((finding, index) => <article className="finding" key={`${finding.rule_id}-${index}`}>
+                  <div><span className="tag">{finding.severity}</span><strong>{finding.rule_id}</strong></div>
+                  <small>{finding.file}:{finding.line || '?'}</small><p>{finding.message}</p>
+                </article>)}
+            </> : <p className="muted">Select a scan to see its evidence.</p>}
+          </section>
         </div>
-
-        {/* CONTENT */}
-        <main style={{ flex:1, overflowY:'auto', padding:'30px 34px 60px', position:'relative', zIndex:1 }}>
-          {tab === 'dashboard'       && <Dashboard />}
-          {tab === 'vulnerabilities' && <Vulnerabilities />}
-          {tab === 'reports'         && <Reports />}
-          {tab === 'analysis'        && <Analysis />}
-          {tab === 'admin'           && <AdminPanel />}
-          {tab === 'analytics'       && <Analytics />}
-          {tab === 'patches'         && <Patches />}
-          {tab === 'settings'        && <Settings />}
-        </main>
-      </div>
-      <style>{`@keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}`}</style>
+      </main>
+      <footer>Static analysis only · Assess repositories you are authorized to review · Manual verification required</footer>
     </div>
   )
 }
-

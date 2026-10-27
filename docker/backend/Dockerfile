@@ -12,6 +12,12 @@ RUN apt-get update && apt-get install -y \
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Keep Semgrep's pinned dependency tree out of the API interpreter.
+COPY backend/scanner-requirements.txt ./scanner-requirements.txt
+RUN python -m venv /opt/semgrep \
+    && /opt/semgrep/bin/python -m pip install --no-cache-dir -r scanner-requirements.txt
+ENV SEMGREP_PATH=/opt/semgrep/bin/semgrep
+
 
 # STAGE 2 - Development
 FROM base AS development

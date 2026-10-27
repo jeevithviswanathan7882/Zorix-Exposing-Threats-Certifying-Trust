@@ -1,10 +1,10 @@
 # STAGE 1 - Development
-FROM node:20-alpine AS development
+FROM node:22-alpine AS development
 
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY frontend/ .
 
@@ -13,12 +13,12 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 
 # STAGE 2 - Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY frontend/ .
 RUN npm run build

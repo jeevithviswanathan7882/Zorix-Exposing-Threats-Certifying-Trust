@@ -20,7 +20,9 @@ from backend.models import (
     DynamicScanLog, PayloadResult, ExploitExecution, AnalysisResult
 )
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+from backend.api.deps import require_admin
+
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
 # =========================================================

@@ -26,7 +26,7 @@ class GUID(TypeDecorator):
         if value is None:
             return value
         if settings.DATABASE_TYPE == "postgres":
-            return value
+            return uuid.UUID(str(value))
         return str(value) if not isinstance(value, str) else value
     
     def process_result_value(self, value, dialect):

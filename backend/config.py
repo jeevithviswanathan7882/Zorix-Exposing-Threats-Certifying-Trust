@@ -1,5 +1,5 @@
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, computed_field
 from functools import lru_cache
 from typing import Optional
@@ -67,9 +67,7 @@ class Settings(BaseSettings):
     EMAIL_NOTIFICATIONS: bool = False
     NOTIFICATION_EMAIL: str = ""
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod

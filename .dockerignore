@@ -1,6 +1,12 @@
 node_modules
+**/node_modules
+**/dist
+.venv
+.api-venv
+.scanner-venv
 venv
 __pycache__
+**/__pycache__
 *.pyc
 .git
 .vscode

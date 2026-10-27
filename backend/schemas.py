@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
@@ -27,8 +27,7 @@ class UserResponse(BaseModel):
     role: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Project Schemas =====
@@ -47,8 +46,7 @@ class ProjectResponse(BaseModel):
     repository_url: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Bug Report Schemas =====
@@ -79,8 +77,7 @@ class BugReportResponse(BaseModel):
     source: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Code Snapshot Schemas =====
@@ -94,8 +91,7 @@ class CodeSnapshotResponse(BaseModel):
     snapshot_data: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Analysis Result Schemas =====
@@ -119,8 +115,7 @@ class AnalysisResultResponse(BaseModel):
     confidence_score: float
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Auth Schemas =====

@@ -10,7 +10,9 @@ from datetime import datetime
 from backend.database import get_db
 from backend.models import LogEntry
 
-router = APIRouter(prefix="/logs", tags=["logs"])
+from backend.api.deps import require_admin
+
+router = APIRouter(prefix="/logs", tags=["logs"], dependencies=[Depends(require_admin)])
 
 
 @router.get("")
