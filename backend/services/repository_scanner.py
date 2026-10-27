@@ -15,7 +15,7 @@ from backend.config import get_settings
 RULES_PATH = Path(__file__).resolve().parents[2] / "security" / "semgrep_rules.yaml"
 SUPPORTED_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx"}
 EXCLUDED_PARTS = {"node_modules", ".venv", "venv", "dist", "build", ".git", "vendor"}
-MAX_FILES = 50
+MAX_FILES = 100
 MAX_FILE_BYTES = 200_000
 MAX_TOTAL_BYTES = 2_000_000
 SHA_PATTERN = re.compile(r"[a-fA-F0-9]{40}\Z")
@@ -39,6 +39,10 @@ async def fetch_repository_snapshot(owner: str, repo: str, token: str | None = N
     async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
         async def get_json(url: str) -> dict:
             response = await client.get(url, headers=headers)
+            if response.status_code == 403 and response.headers.get("X-RateLimit-Remaining") == "0":
+                raise ValueError("GitHub API rate limit reached; provide a GitHub token and retry")
+            if response.status_code == 401:
+                raise ValueError("GitHub rejected the provided token")
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):

@@ -8,7 +8,7 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 
 - GitHub repository scans pinned to the default branch's commit SHA, plus individual file scans
 - Python, JavaScript, and TypeScript source (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`)
-- Repository limits: 50 supported files, 200 KB per file, 2 MB total; oversized or truncated scans fail explicitly
+- Repository limits: 100 supported files, 200 KB per file, 2 MB total; oversized or truncated scans fail explicitly
 - Semgrep findings with rule ID, file, line, severity, and message
 - Authenticated HTML and SARIF 2.1.0 exports for completed scans
 - User registration, JWT sign-in, and per-user access to scan results and reports
@@ -29,7 +29,7 @@ Requirements: Python 3.11, Node.js 22 or newer, npm, and access to the GitHub AP
    cp .env.example .env
    ```
 
-   Set `SECRET_KEY` in `.env` to a unique random value. Keep `ALLOWED_ORIGINS` as a JSON list. The default local database is SQLite. Set `GITHUB_TOKEN` if you need private repository access or higher GitHub API limits.
+   Set `SECRET_KEY` in `.env` to a unique random value. Keep `ALLOWED_ORIGINS` as a JSON list. The default local database is SQLite. Set `GITHUB_TOKEN` if you need private repository access or higher GitHub API limits. You can also provide a token for one scan in the UI; it is sent to the API for that request and is not stored in the scan record.
 
 2. Start the API from the repository root:
 

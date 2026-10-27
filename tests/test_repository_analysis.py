@@ -50,10 +50,13 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
     blob_sha = "b" * 40
     requested = []
     truncated = False
+    rate_limited = False
 
     def handler(request):
         requested.append(str(request.url))
         if request.url.path == "/repos/example/project":
+            if rate_limited:
+                return httpx.Response(403, headers={"X-RateLimit-Remaining": "0"})
             return httpx.Response(200, json={"default_branch": "main"})
         if request.url.path.endswith("/commits/main"):
             return httpx.Response(200, json={"sha": commit_sha})
@@ -73,7 +76,7 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
                         lambda **kwargs: client_type(transport=transport, **kwargs))
 
     async def scenario():
-        nonlocal truncated
+        nonlocal truncated, rate_limited
         sha, files, blob_shas = await repository_scanner.fetch_repository_snapshot("example", "project")
         assert sha == commit_sha
         assert files == {"src/app.py": "print('hello')\n"}
@@ -82,6 +85,13 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
         assert all("/contents/" not in url for url in requested)
         truncated = True
         with pytest.raises(ValueError, match="truncated"):
+            await repository_scanner.fetch_repository_snapshot("example", "project")
+        truncated = False
+        monkeypatch.setattr(repository_scanner, "MAX_FILES", 0)
+        with pytest.raises(ValueError, match="more than 0"):
+            await repository_scanner.fetch_repository_snapshot("example", "project")
+        rate_limited = True
+        with pytest.raises(ValueError, match="rate limit"):
             await repository_scanner.fetch_repository_snapshot("example", "project")
 
     asyncio.run(scenario())

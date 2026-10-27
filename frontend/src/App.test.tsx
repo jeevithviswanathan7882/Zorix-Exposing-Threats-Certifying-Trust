@@ -38,7 +38,7 @@ describe('Zorix frontend', () => {
 
   it('submits a pinned repository scan by default', async () => {
     localStorage.setItem('zorix_token', 'test-token')
-    const fetchMock = vi.fn(async (url: string) => ({
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => ({
       ok: true,
       json: async () => url.endsWith('/analysis/repository')
         ? { status: 'completed', findings: [], analysis_id: 'scan-2' }
@@ -49,8 +49,14 @@ describe('Zorix frontend', () => {
     fireEvent.change(screen.getByLabelText('GitHub repository URL'), {
       target: { value: 'https://github.com/example/project' },
     })
+    fireEvent.change(screen.getByLabelText('GitHub token (optional)'), {
+      target: { value: 'temporary-token' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Run static scan' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(call =>
       call[0] === '/api/analysis/repository')).toBe(true))
+    const request = fetchMock.mock.calls.find(call => call[0] === '/api/analysis/repository')
+    expect(JSON.parse(String(request?.[1]?.body)).github_token).toBe('temporary-token')
+    await waitFor(() => expect((screen.getByLabelText('GitHub token (optional)') as HTMLInputElement).value).toBe(''))
   })
 })

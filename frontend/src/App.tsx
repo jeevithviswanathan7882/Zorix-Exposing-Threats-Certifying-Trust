@@ -38,6 +38,7 @@ export default function App() {
   const [registering, setRegistering] = useState(false)
   const [repoUrl, setRepoUrl] = useState('')
   const [affectedFile, setAffectedFile] = useState('')
+  const [githubToken, setGithubToken] = useState('')
   const [scanScope, setScanScope] = useState<'repository' | 'file'>('repository')
   const [scans, setScans] = useState<Scan[]>([])
   const [selected, setSelected] = useState<Scan | null>(null)
@@ -83,15 +84,16 @@ export default function App() {
       const result = await request<ScanResponse>(scanScope === 'repository' ? '/analysis/repository' : '/analysis/analyze', token, {
         method: 'POST',
         body: JSON.stringify(scanScope === 'repository'
-          ? { repo_url: repoUrl }
-          : { repo_url: repoUrl, affected_file: affectedFile }),
+          ? { repo_url: repoUrl, ...(githubToken ? { github_token: githubToken } : {}) }
+          : { repo_url: repoUrl, affected_file: affectedFile,
+              ...(githubToken ? { github_token: githubToken } : {}) }),
       })
       await loadScans(true)
       setNotice(result.status === 'completed'
         ? `Scan complete: ${result.findings.length} potential finding(s). Review the evidence before reporting.`
         : `Scan ${result.status}: ${result.error || 'Check scanner configuration.'}`)
     } catch (err) { setError((err as Error).message) }
-    finally { setBusy(false) }
+    finally { setGithubToken(''); setBusy(false) }
   }
 
   const downloadReport = async (id: string, format: 'html' | 'sarif') => {
@@ -158,6 +160,7 @@ export default function App() {
             </select></label>
             <label>GitHub repository URL<input type="url" placeholder="https://github.com/owner/repository" value={repoUrl} onChange={e => setRepoUrl(e.target.value)} required /></label>
             {scanScope === 'file' && <label>Affected file path<input placeholder="app/auth.py" value={affectedFile} onChange={e => setAffectedFile(e.target.value)} required /></label>}
+            <label>GitHub token (optional)<input type="password" autoComplete="off" value={githubToken} onChange={e => setGithubToken(e.target.value)} /></label>
             <button disabled={busy}>{busy ? 'Scanning…' : 'Run static scan'}</button>
           </form>
         </section>
