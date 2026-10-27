@@ -59,4 +59,24 @@ describe('Zorix frontend', () => {
     expect(JSON.parse(String(request?.[1]?.body)).github_token).toBe('temporary-token')
     await waitFor(() => expect((screen.getByLabelText('GitHub token (optional)') as HTMLInputElement).value).toBe(''))
   })
+
+  it('shows changes between scans of the same scope', async () => {
+    localStorage.setItem('zorix_token', 'test-token')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes('/compare/')
+        ? { introduced: [], resolved: [], introduced_count: 1, resolved_count: 0,
+            unchanged_count: 2, note: 'Manual review required' }
+        : { results: ['new', 'old'].map(id => ({
+            id, repository: 'https://github.com/example/project', affected_file: '(repository)',
+            status: 'completed', finding_count: 0, findings: [], file_count: 2,
+            commit_sha: 'a'.repeat(40), created_at: '2026-01-01T00:00:00',
+          })) },
+    })))
+    render(<App />)
+    const baseline = await screen.findByLabelText('Compare with a scan of this repository')
+    fireEvent.change(baseline, { target: { value: 'old' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Compare findings' }))
+    await waitFor(() => expect(screen.getByText('1 introduced · 0 resolved · 2 unchanged')).toBeTruthy())
+  })
 })

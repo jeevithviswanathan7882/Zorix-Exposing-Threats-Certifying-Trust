@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import './App.css'
+import './Comparison.css'
 
 type Finding = { rule_id: string; file: string; line: number | null; severity: string; message: string }
 type Scan = {
@@ -14,6 +15,7 @@ type Scan = {
   created_at: string
 }
 type ScanResponse = { status: string; error?: string; findings: Finding[]; analysis_id: string }
+type Comparison = { introduced: Finding[]; resolved: Finding[]; introduced_count: number; resolved_count: number; unchanged_count: number; note: string }
 
 const API = '/api'
 
@@ -42,6 +44,8 @@ export default function App() {
   const [scanScope, setScanScope] = useState<'repository' | 'file'>('repository')
   const [scans, setScans] = useState<Scan[]>([])
   const [selected, setSelected] = useState<Scan | null>(null)
+  const [baselineId, setBaselineId] = useState('')
+  const [comparison, setComparison] = useState<Comparison | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -58,6 +62,7 @@ export default function App() {
   }, [token])
 
   useEffect(() => { void loadScans() }, [loadScans])
+  useEffect(() => { setBaselineId(''); setComparison(null) }, [selected?.id])
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault()
@@ -109,6 +114,16 @@ export default function App() {
       link.download = `zorix-${id}.${format}`
       link.click()
       URL.revokeObjectURL(url)
+    } catch (err) { setError((err as Error).message) }
+  }
+
+  const compareScans = async () => {
+    if (!selected || !baselineId) return
+    setError('')
+    try {
+      setComparison(await request<Comparison>(
+        `/analysis/results/${selected.id}/compare/${baselineId}`, token,
+      ))
     } catch (err) { setError((err as Error).message) }
   }
 
@@ -180,6 +195,20 @@ export default function App() {
               <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
               <button className="secondary" onClick={() => void downloadReport(selected.id, 'html')}>Download HTML report</button>
               {selected.status === 'completed' && <button className="secondary" onClick={() => void downloadReport(selected.id, 'sarif')}>Download SARIF</button>}
+              {selected.status === 'completed' && scans.some(scan => scan.id !== selected.id && scan.repository === selected.repository && scan.affected_file === selected.affected_file && scan.status === 'completed') && <div className="comparison-controls">
+                <label>Compare with a scan of this repository<select value={baselineId} onChange={e => { setBaselineId(e.target.value); setComparison(null) }}>
+                  <option value="">Choose baseline scan</option>
+                  {scans.filter(scan => scan.id !== selected.id && scan.repository === selected.repository && scan.affected_file === selected.affected_file && scan.status === 'completed').map(scan =>
+                    <option key={scan.id} value={scan.id}>{scan.affected_file} · {new Date(scan.created_at).toLocaleString()}</option>)}
+                </select></label>
+                <button className="secondary" disabled={!baselineId} onClick={() => void compareScans()}>Compare findings</button>
+              </div>}
+              {comparison && <div className="comparison-result" role="status">
+                <p>{comparison.introduced_count} introduced · {comparison.resolved_count} resolved · {comparison.unchanged_count} unchanged</p>
+                <p className="muted">{comparison.note}</p>
+                {comparison.introduced.map((finding, index) => <p key={`new-${index}`}>New: {finding.rule_id} in {finding.file}:{finding.line}</p>)}
+                {comparison.resolved.map((finding, index) => <p key={`old-${index}`}>Gone: {finding.rule_id} in {finding.file}:{finding.line}</p>)}
+              </div>}
               {selected.findings.length === 0 ? <p className="muted">No findings recorded. This does not prove the file is secure.</p> :
                 selected.findings.map((finding, index) => <article className="finding" key={`${finding.rule_id}-${index}`}>
                   <div><span className="tag">{finding.severity}</span><strong>{finding.rule_id}</strong></div>

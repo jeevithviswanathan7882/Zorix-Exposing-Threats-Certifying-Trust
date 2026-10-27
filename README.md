@@ -11,6 +11,7 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 - Repository limits: 100 supported files, 200 KB per file, 2 MB total; oversized or truncated scans fail explicitly
 - Semgrep findings with rule ID, file, line, severity, and message
 - Authenticated HTML and SARIF 2.1.0 exports for completed scans
+- Owner-scoped comparison of findings between completed scans of the same repository
 - User registration, JWT sign-in, and per-user access to scan results and reports
 - Input checks for GitHub URLs and repository paths, a 200 KB file limit, and escaped HTML reports
 - Python integration tests, frontend unit tests, TypeScript checking, npm audit, and Docker builds in CI
@@ -78,6 +79,8 @@ curl -X POST http://localhost:8000/api/analysis/repository \
 
 A successful response includes an `analysis_id`, commit SHA, file count, scanner status, and findings. For one file, use `POST /api/analysis/analyze` with `repo_url` and `affected_file`. Retrieve your history with `GET /api/analysis/results`, a single result with `GET /api/analysis/results/{analysis_id}`, and its report with `GET /api/analysis/reports/{analysis_id}/html` or `/sarif`. Results and reports require authentication and are scoped to their owner. SARIF is available only after a completed scan; failed scans cannot be exported as clean results.
 
+Compare two completed scans of the same repository and scope with `GET /api/analysis/results/{analysis_id}/compare/{baseline_id}` or the comparison controls in the UI. The response lists introduced, resolved, and unchanged **static findings**. A finding disappearing does not prove that a vulnerability was fixed.
+
 ## Verification
 
 Run these checks before opening a pull request:
@@ -103,7 +106,7 @@ Repository scans resolve the default branch to a commit SHA, enumerate its Git t
 ## Next milestones
 
 1. Normalize findings from additional tools into one evidence model, starting with dependency and container scanning.
-2. Add review states, false-positive handling, and fix-and-rescan comparisons.
+2. Add review states, false-positive handling, and richer fix-and-rescan workflows.
 3. Add authenticated, opt-in dynamic testing against explicitly allowlisted local targets.
 4. Add CI policy gates and export formats for security workflows.
 

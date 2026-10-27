@@ -117,6 +117,21 @@ def test_sarif_rejects_failed_scan():
         build_sarif({"status": "error", "findings": []})
 
 
+def test_scan_comparison_tracks_duplicate_findings_and_failed_scans():
+    from backend.services.scan_comparison import compare_findings
+
+    finding = {"rule_id": "rule", "file": "app.py", "line": 2, "severity": "WARNING", "message": "Review"}
+    changes = compare_findings(
+        {"status": "completed", "findings": [finding, finding]},
+        {"status": "completed", "findings": [finding]},
+    )
+    assert changes["introduced_count"] == 1
+    assert changes["resolved_count"] == 0
+    assert changes["unchanged_count"] == 1
+    with pytest.raises(ValueError, match="completed"):
+        compare_findings({"status": "error", "findings": []}, {"status": "completed", "findings": []})
+
+
 def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
     async def scenario():
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
@@ -182,6 +197,23 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert own_results.json()["total"] == 2
                 assert own_results.json()["results"][0]["commit_sha"] == "a" * 40
                 assert other_results.json()["total"] == 0
+                repository_scan_id = repository_scan.json()["analysis_id"]
+                assert (await client.get(
+                    f"/api/analysis/results/{repository_scan_id}/compare/{scan_id}", headers=alice
+                )).status_code == 422
+                monkeypatch.setattr(pipeline_module, "scan_files", lambda files: {
+                    "status": "completed", "findings": [{"rule_id": "new-rule", "file": "src/app.py",
+                                                         "line": 1, "severity": "WARNING", "message": "Review"}],
+                })
+                newer = await client.post("/api/analysis/repository", json={
+                    "repo_url": "https://github.com/example/project"}, headers=alice)
+                assert newer.status_code == 200, newer.text
+                comparison_path = f"/api/analysis/results/{newer.json()['analysis_id']}/compare/{repository_scan_id}"
+                assert (await client.get(comparison_path, headers=bob)).status_code == 404
+                comparison = await client.get(comparison_path, headers=alice)
+                assert comparison.status_code == 200
+                assert comparison.json()["resolved_count"] == 0
+                assert comparison.json()["introduced_count"] == 1
                 assert (await client.get(f"/api/analysis/results/{scan_id}", headers=bob)).status_code == 404
                 assert (await client.get(f"/api/analysis/reports/{scan_id}/html", headers=bob)).status_code == 404
                 assert (await client.get(f"/api/analysis/reports/{scan_id}/sarif", headers=bob)).status_code == 404

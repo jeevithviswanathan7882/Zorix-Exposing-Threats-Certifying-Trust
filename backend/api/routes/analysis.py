@@ -16,6 +16,7 @@ from backend.database import get_db
 from backend.models import AnalysisResult, BugReport, Project, Report, ScanResult, User
 from backend.services.pipeline_orchestrator import VulnerabilityPipeline
 from backend.services.sarif_export import build_sarif
+from backend.services.scan_comparison import compare_findings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -174,6 +175,38 @@ async def get_analysis_results(
         "cvss_score": None,
         "report_url": f"/api/analysis/reports/{analysis_id}/html",
         "created_at": analysis.created_at.isoformat(),
+    }
+
+
+@router.get("/results/{analysis_id}/compare/{baseline_id}")
+async def compare_analysis_results(
+    analysis_id: UUID,
+    baseline_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    current = await _owned_analysis(db, user, analysis_id)
+    baseline = await _owned_analysis(db, user, baseline_id)
+    scopes = (await db.execute(select(BugReport.id, BugReport.repository_url, BugReport.affected_file).where(
+        BugReport.id.in_([current.bug_report_id, baseline.bug_report_id])
+    ))).all()
+    if len({(repository, affected_file) for _, repository, affected_file in scopes}) != 1:
+        raise HTTPException(status_code=422, detail="Scans must cover the same repository and scope")
+    scans = (await db.execute(select(ScanResult).where(
+        ScanResult.analysis_result_id.in_([analysis_id, baseline_id])
+    ))).scalars().all()
+    evidence = {scan.analysis_result_id: json.loads(scan.scan_output) for scan in scans}
+    if analysis_id not in evidence or baseline_id not in evidence:
+        raise HTTPException(status_code=404, detail="Scan evidence not found")
+    try:
+        changes = compare_findings(evidence[analysis_id], evidence[baseline_id])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "analysis_id": str(analysis_id), "baseline_id": str(baseline_id),
+        "commit_sha": evidence[analysis_id].get("commit_sha"),
+        "baseline_commit_sha": evidence[baseline_id].get("commit_sha"),
+        **changes,
     }
 
 
