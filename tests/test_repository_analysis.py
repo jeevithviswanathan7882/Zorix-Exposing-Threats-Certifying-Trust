@@ -1,6 +1,7 @@
 """Tests for scan evidence, input validation, and user isolation."""
 
 import asyncio
+import base64
 import os
 import sys
 from pathlib import Path
@@ -42,6 +43,63 @@ def test_semgrep_reports_real_rule_and_clean_file(monkeypatch):
     assert clean["findings"] == []
 
 
+def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monkeypatch):
+    from backend.services import repository_scanner
+
+    commit_sha = "a" * 40
+    blob_sha = "b" * 40
+    requested = []
+    truncated = False
+
+    def handler(request):
+        requested.append(str(request.url))
+        if request.url.path == "/repos/example/project":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": commit_sha})
+        if request.url.path.endswith(f"/git/trees/{commit_sha}"):
+            return httpx.Response(200, json={"truncated": truncated, "tree": [
+                {"type": "blob", "path": "src/app.py", "sha": blob_sha, "size": 17},
+                {"type": "blob", "path": "node_modules/noise.py", "sha": blob_sha, "size": 17},
+            ]})
+        if request.url.path.endswith(f"/git/blobs/{blob_sha}"):
+            return httpx.Response(200, json={"sha": blob_sha, "encoding": "base64",
+                                             "content": base64.b64encode(b"print('hello')\n").decode()})
+        return httpx.Response(404)
+
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(repository_scanner.httpx, "AsyncClient",
+                        lambda **kwargs: client_type(transport=transport, **kwargs))
+
+    async def scenario():
+        nonlocal truncated
+        sha, files, blob_shas = await repository_scanner.fetch_repository_snapshot("example", "project")
+        assert sha == commit_sha
+        assert files == {"src/app.py": "print('hello')\n"}
+        assert blob_shas == {"src/app.py": blob_sha}
+        assert any(f"/git/trees/{commit_sha}" in url for url in requested)
+        assert all("/contents/" not in url for url in requested)
+        truncated = True
+        with pytest.raises(ValueError, match="truncated"):
+            await repository_scanner.fetch_repository_snapshot("example", "project")
+
+    asyncio.run(scenario())
+
+
+def test_repository_semgrep_preserves_relative_paths(monkeypatch):
+    from backend.services import repository_scanner
+
+    monkeypatch.setattr(pipeline_module.settings, "SEMGREP_PATH", os.environ.get(
+        "SEMGREP_PATH", str(Path(sys.executable).parent / "semgrep")
+    ))
+    if not Path(pipeline_module.settings.SEMGREP_PATH).exists():
+        pytest.skip("Local Semgrep executable is unavailable")
+    result = repository_scanner.scan_files({"src/app.py": "import os\nos.system(user_input)\n"})
+    assert result["status"] == "completed"
+    assert any(item["file"] == "src/app.py" for item in result["findings"])
+
+
 def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
     async def scenario():
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
@@ -61,6 +119,11 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
             "status": "completed",
             "findings": [{"rule_id": "os-system-call", "file": filename, "line": 2,
                           "severity": "ERROR", "message": "Potential <script>alert(1)</script>"}],
+        })
+        monkeypatch.setattr(pipeline_module, "fetch_repository_snapshot",
+                            lambda *args, **kwargs: asyncio.sleep(0, result=("a" * 40, {"src/app.py": "print(1)"}, {"src/app.py": "b" * 40})))
+        monkeypatch.setattr(pipeline_module, "scan_files", lambda files: {
+            "status": "completed", "findings": [],
         })
         monkeypatch.setattr(pipeline_module.settings, "REPORTS_DIR", str(tmp_path / "reports"))
         app.dependency_overrides[get_db] = override_db
@@ -92,9 +155,15 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert body["score"] is None
                 assert body["findings"][0]["rule_id"] == "os-system-call"
                 scan_id = body["analysis_id"]
+                repository_scan = await client.post("/api/analysis/repository", json={
+                    "repo_url": "https://github.com/example/project"}, headers=alice)
+                assert repository_scan.status_code == 200, repository_scan.text
+                assert repository_scan.json()["commit_sha"] == "a" * 40
+                assert repository_scan.json()["file_count"] == 1
                 own_results = await client.get("/api/analysis/results", headers=alice)
                 other_results = await client.get("/api/analysis/results", headers=bob)
-                assert own_results.json()["total"] == 1
+                assert own_results.json()["total"] == 2
+                assert own_results.json()["results"][0]["commit_sha"] == "a" * 40
                 assert other_results.json()["total"] == 0
                 assert (await client.get(f"/api/analysis/results/{scan_id}", headers=bob)).status_code == 404
                 assert (await client.get(f"/api/analysis/reports/{scan_id}/html", headers=bob)).status_code == 404

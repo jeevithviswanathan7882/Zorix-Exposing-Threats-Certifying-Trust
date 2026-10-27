@@ -30,6 +30,11 @@ class AnalyzeRequest(BaseModel):
     github_token: str | None = None
 
 
+class RepositoryScanRequest(BaseModel):
+    repo_url: HttpUrl
+    github_token: str | None = None
+
+
 async def _owned_analysis(db: AsyncSession, user: User, analysis_id: UUID) -> AnalysisResult:
     query = (
         select(AnalysisResult)
@@ -80,6 +85,33 @@ async def analyze_vulnerability(
         raise HTTPException(status_code=502, detail="Repository fetch or scan failed")
 
 
+@router.post("/repository")
+async def analyze_repository(
+    request: RepositoryScanRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        try:
+            await asyncio.wait_for(_scan_slots.acquire(), timeout=0.1)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=429, detail="Scanner is busy; retry later") from exc
+        try:
+            return await pipeline.run_repository_pipeline(
+                repo_url=str(request.repo_url), github_token=request.github_token,
+                db=db, user_id=user.id,
+            )
+        finally:
+            _scan_slots.release()
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Repository scan failed")
+        raise HTTPException(status_code=502, detail="Repository fetch or scan failed")
+
+
 @router.get("/results")
 async def get_all_results(
     db: AsyncSession = Depends(get_db),
@@ -107,6 +139,8 @@ async def get_all_results(
             "verification_status": "unverified",
             "finding_count": scan.finding_count if scan else 0,
             "findings": evidence.get("findings", []),
+            "commit_sha": evidence.get("commit_sha"),
+            "file_count": evidence.get("file_count", 1),
             "cvss_score": None,
             "severity": "UNVERIFIED" if scan and scan.finding_count else "UNKNOWN",
             "root_cause": analysis.root_cause,
@@ -134,6 +168,8 @@ async def get_analysis_results(
         "verification_status": "unverified",
         "findings": evidence.get("findings", []),
         "finding_count": scan.finding_count if scan else 0,
+        "commit_sha": evidence.get("commit_sha"),
+        "file_count": evidence.get("file_count", 1),
         "cvss_score": None,
         "report_url": f"/api/analysis/reports/{analysis_id}/html",
         "created_at": analysis.created_at.isoformat(),

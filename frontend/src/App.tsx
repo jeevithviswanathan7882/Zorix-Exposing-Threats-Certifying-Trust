@@ -9,6 +9,8 @@ type Scan = {
   status: string
   finding_count: number
   findings: Finding[]
+  commit_sha: string | null
+  file_count: number
   created_at: string
 }
 type ScanResponse = { status: string; error?: string; findings: Finding[]; analysis_id: string }
@@ -36,6 +38,7 @@ export default function App() {
   const [registering, setRegistering] = useState(false)
   const [repoUrl, setRepoUrl] = useState('')
   const [affectedFile, setAffectedFile] = useState('')
+  const [scanScope, setScanScope] = useState<'repository' | 'file'>('repository')
   const [scans, setScans] = useState<Scan[]>([])
   const [selected, setSelected] = useState<Scan | null>(null)
   const [busy, setBusy] = useState(false)
@@ -77,9 +80,11 @@ export default function App() {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     try {
-      const result = await request<ScanResponse>('/analysis/analyze', token, {
+      const result = await request<ScanResponse>(scanScope === 'repository' ? '/analysis/repository' : '/analysis/analyze', token, {
         method: 'POST',
-        body: JSON.stringify({ repo_url: repoUrl, affected_file: affectedFile }),
+        body: JSON.stringify(scanScope === 'repository'
+          ? { repo_url: repoUrl }
+          : { repo_url: repoUrl, affected_file: affectedFile }),
       })
       await loadScans(true)
       setNotice(result.status === 'completed'
@@ -139,7 +144,7 @@ export default function App() {
       <main>
         <div className="intro">
           <div><span className="eyebrow">Repository analysis</span><h1>Review evidence. Verify risk.</h1>
-          <p>Scan a specific GitHub source file with Semgrep. Findings are potential issues, not confirmed exploits or CVSS scores.</p></div>
+          <p>Scan a bounded GitHub repository or one source file with Semgrep. Findings are potential issues, not confirmed exploits or CVSS scores.</p></div>
           <div className="count"><strong>{scans.length}</strong><span>your scans</span></div>
         </div>
         {error && <div className="error" role="alert">{error}</div>}
@@ -147,8 +152,12 @@ export default function App() {
         <section className="panel">
           <h2>New scan</h2>
           <form className="scan-form" onSubmit={startScan}>
+            <label>Scan scope<select value={scanScope} onChange={e => setScanScope(e.target.value as 'repository' | 'file')}>
+              <option value="repository">Repository at pinned commit</option>
+              <option value="file">One source file</option>
+            </select></label>
             <label>GitHub repository URL<input type="url" placeholder="https://github.com/owner/repository" value={repoUrl} onChange={e => setRepoUrl(e.target.value)} required /></label>
-            <label>Affected file path<input placeholder="app/auth.py" value={affectedFile} onChange={e => setAffectedFile(e.target.value)} required /></label>
+            {scanScope === 'file' && <label>Affected file path<input placeholder="app/auth.py" value={affectedFile} onChange={e => setAffectedFile(e.target.value)} required /></label>}
             <button disabled={busy}>{busy ? 'Scanning…' : 'Run static scan'}</button>
           </form>
         </section>
@@ -157,13 +166,14 @@ export default function App() {
             {scans.length === 0 ? <p className="muted">No scans yet.</p> : scans.map(scan => (
               <button key={scan.id} className={`run ${selected?.id === scan.id ? 'active' : ''}`} onClick={() => setSelected(scan)}>
                 <strong>{scan.affected_file}</strong><span>{scan.repository}</span>
-                <small>{scan.status} · {scan.finding_count} potential finding(s) · {new Date(scan.created_at).toLocaleString()}</small>
+                <small>{scan.status} · {scan.file_count} file(s) · {scan.finding_count} potential finding(s) · {new Date(scan.created_at).toLocaleString()}</small>
               </button>
             ))}
           </section>
           <section className="panel details"><h2>Evidence</h2>
             {selected ? <>
               <p className="muted">Scan ID: {selected.id}</p>
+              {selected.commit_sha && <p className="muted">Commit: <code>{selected.commit_sha}</code></p>}
               <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
               <button className="secondary" onClick={() => void downloadReport(selected.id)}>Download HTML report</button>
               {selected.findings.length === 0 ? <p className="muted">No findings recorded. This does not prove the file is secure.</p> :

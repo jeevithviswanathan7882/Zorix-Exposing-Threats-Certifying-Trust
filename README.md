@@ -2,11 +2,13 @@
 
 **Evidence-based repository security review**
 
-Zorix is a FastAPI and React project for reviewing source files in GitHub repositories. It fetches a selected file through the GitHub API, runs local Semgrep rules, stores the findings for the signed-in user, and generates an HTML report. Findings are **potential issues requiring manual review**. Zorix does not currently prove exploitability or calculate a CVSS score.
+Zorix is a FastAPI and React project for reviewing GitHub source code. It can scan a bounded repository snapshot at a pinned commit or one selected source file. It runs local Semgrep rules, stores the findings for the signed-in user, and generates an HTML report. Findings are **potential issues requiring manual review**. Zorix does not currently prove exploitability or calculate a CVSS score.
 
 ## Current capabilities
 
-- GitHub file analysis for Python, JavaScript, and TypeScript (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`)
+- GitHub repository scans pinned to the default branch's commit SHA, plus individual file scans
+- Python, JavaScript, and TypeScript source (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`)
+- Repository limits: 50 supported files, 200 KB per file, 2 MB total; oversized or truncated scans fail explicitly
 - Semgrep findings with rule ID, file, line, severity, and message
 - User registration, JWT sign-in, and per-user access to scan results and reports
 - Input checks for GitHub URLs and repository paths, a 200 KB file limit, and escaped HTML reports
@@ -48,7 +50,7 @@ Requirements: Python 3.11, Node.js 22 or newer, npm, and access to the GitHub AP
    npm run dev
    ```
 
-Open <http://localhost:3000>, register, sign in, and enter an HTTPS GitHub repository URL and a relative file path, such as `src/app.py`. The frontend proxies `/api` requests to <http://localhost:8000>. API documentation is at <http://localhost:8000/docs>; health status is at <http://localhost:8000/health>.
+Open <http://localhost:3000>, register, sign in, and enter an HTTPS GitHub repository URL. Choose a repository scan or a relative file path such as `src/app.py`. The frontend proxies `/api` requests to <http://localhost:8000>. API documentation is at <http://localhost:8000/docs>; health status is at <http://localhost:8000/health>.
 
 ### Docker Compose
 
@@ -62,19 +64,18 @@ If those host ports are already in use, set `ZORIX_FRONTEND_PORT`, `ZORIX_API_PO
 
 ## API example
 
-Register and log in through `/api/auth/register` and `/api/auth/login`, then submit a scan with the returned bearer token:
+Register and log in through `/api/auth/register` and `/api/auth/login`, then submit a repository scan with the returned bearer token:
 
 ```bash
-curl -X POST http://localhost:8000/api/analysis/analyze \
+curl -X POST http://localhost:8000/api/analysis/repository \
   -H 'Authorization: Bearer YOUR_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{
-    "repo_url": "https://github.com/owner/repository",
-    "affected_file": "src/app.py"
+    "repo_url": "https://github.com/owner/repository"
   }'
 ```
 
-A successful response includes an `analysis_id`, scanner status, and the findings. Retrieve your history with `GET /api/analysis/results`, a single result with `GET /api/analysis/results/{analysis_id}`, and its HTML report with `GET /api/analysis/reports/{analysis_id}/html`. Results and reports require authentication and are scoped to their owner.
+A successful response includes an `analysis_id`, commit SHA, file count, scanner status, and findings. For one file, use `POST /api/analysis/analyze` with `repo_url` and `affected_file`. Retrieve your history with `GET /api/analysis/results`, a single result with `GET /api/analysis/results/{analysis_id}`, and its HTML report with `GET /api/analysis/reports/{analysis_id}/html`. Results and reports require authentication and are scoped to their owner.
 
 ## Verification
 
@@ -90,20 +91,19 @@ npm run build
 npm audit --audit-level=high
 ```
 
-The backend tests cover target validation, a real Semgrep rule match and clean file, account roles, authentication, scan evidence, and cross-user isolation. The frontend tests cover sign-in and the evidence view. GitHub Actions also compiles Python, audits dependencies, and builds the backend and frontend container images. The Semgrep dependency exceptions are documented in [SECURITY.md](SECURITY.md).
+The backend tests cover target validation, commit-pinned repository fetching, truncated-tree rejection, real Semgrep rule matches, account roles, authentication, scan evidence, and cross-user isolation. The frontend tests cover sign-in and the evidence view. GitHub Actions also compiles Python, audits dependencies, and builds the backend and frontend container images. The Semgrep dependency exceptions are documented in [SECURITY.md](SECURITY.md).
 
 ## Interpreting findings
 
 A Semgrep match identifies code that fits a rule. It is not a confirmed vulnerability. Review the source and its data flow, reproduce the issue in an authorized test environment, and retest after a fix. Zorix deliberately reports no exploit confirmation and no CVSS value at this stage. A clean scan also does not prove that a file is secure.
 
-The current scan covers **one selected file on the repository's default branch**, not the whole repository. The GitHub blob SHA in the report identifies the fetched file content. Dynamic testing, whole-repository coverage, dependency and container scanning, formal CVSS vectors, and AI-assisted review are planned work, not current features.
+Repository scans resolve the default branch to a commit SHA, enumerate its Git tree, and fetch each selected file by blob SHA. They reject truncated trees and limit violations instead of silently reporting partial coverage. Generated and dependency directories are excluded. Individual file scans still fetch the default branch at request time; their blob SHA identifies the content, but they are not pinned to a commit. Dynamic testing, dependency and container scanning, formal CVSS vectors, and AI-assisted review are planned work, not current features.
 
 ## Next milestones
 
-1. Scan complete repositories at a pinned commit with resource limits and reproducible artifacts.
-2. Normalize findings from additional tools into one evidence model, starting with dependency and container scanning.
-3. Add review states, false-positive handling, and fix-and-rescan comparisons.
-4. Add authenticated, opt-in dynamic testing against explicitly allowlisted local targets.
-5. Add CI policy gates and export formats for security workflows.
+1. Normalize findings from additional tools into one evidence model, starting with dependency and container scanning.
+2. Add review states, false-positive handling, and fix-and-rescan comparisons.
+3. Add authenticated, opt-in dynamic testing against explicitly allowlisted local targets.
+4. Add CI policy gates and export formats for security workflows.
 
 This project is intended as a practical security engineering and DevSecOps portfolio piece. Claims in reports and documentation should follow what the tests and recorded evidence can support.

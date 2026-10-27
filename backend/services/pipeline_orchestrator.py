@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.models import AnalysisResult, BugReport, Project, Report, ScanResult
+from backend.services.repository_scanner import fetch_repository_snapshot, scan_files
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -130,6 +131,31 @@ class VulnerabilityPipeline:
         owner, repo, path = validate_target(repo_url, affected_file)
         source, blob_sha = await fetch_source(owner, repo, path, github_token or settings.GITHUB_TOKEN)
         scan = await asyncio.to_thread(run_semgrep, source, path)
+        return await self._record_scan(
+            db, user_id, owner, repo, path, vulnerability_type, affected_line,
+            scan, {"blob_sha": blob_sha, "file_count": 1},
+        )
+
+    async def run_repository_pipeline(
+        self, repo_url: str, github_token: str | None = None,
+        db: AsyncSession | None = None, user_id=None,
+    ) -> dict:
+        if db is None or user_id is None:
+            raise ValueError("A database session and authenticated user are required")
+        owner, repo, _ = validate_target(repo_url, "placeholder.py")
+        commit_sha, files, blob_shas = await fetch_repository_snapshot(
+            owner, repo, github_token or settings.GITHUB_TOKEN
+        )
+        scan = await asyncio.to_thread(scan_files, files)
+        return await self._record_scan(
+            db, user_id, owner, repo, "(repository)", "REPOSITORY_SCAN", None,
+            scan, {"commit_sha": commit_sha, "blob_shas": blob_shas, "file_count": len(files)},
+        )
+
+    async def _record_scan(
+        self, db: AsyncSession, user_id, owner: str, repo: str, path: str,
+        vulnerability_type: str, affected_line: int | None, scan: dict, metadata: dict,
+    ) -> dict:
         findings = scan["findings"]
         canonical_url = f"https://github.com/{owner}/{repo}"
 
@@ -158,7 +184,7 @@ class VulnerabilityPipeline:
         )
         db.add(result)
         await db.flush()
-        evidence = {"status": scan["status"], "blob_sha": blob_sha,
+        evidence = {"status": scan["status"], **metadata,
                     "findings": findings, "error": scan.get("error")}
         db.add(ScanResult(
             analysis_result_id=result.id, scan_type="static", scanner_name="semgrep",
@@ -171,7 +197,7 @@ class VulnerabilityPipeline:
         report_path = Path(settings.REPORTS_DIR) / f"analysis_{result.id}.html"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         rows = "".join(
-            f"<tr><td>{html.escape(str(f['rule_id']))}</td><td>{html.escape(path)}:{f['line']}</td>"
+            f"<tr><td>{html.escape(str(f['rule_id']))}</td><td>{html.escape(str(f['file']))}:{f['line']}</td>"
             f"<td>{html.escape(str(f['severity']))}</td><td>{html.escape(str(f['message']))}</td></tr>"
             for f in findings
         )
@@ -179,8 +205,10 @@ class VulnerabilityPipeline:
             "<!doctype html><meta charset='utf-8'><title>Zorix static scan</title>"
             "<h1>Zorix static scan</h1><p>Potential findings require manual review. "
             "No exploit validation or CVSS scoring was performed.</p>"
-            f"<p>Repository: {html.escape(canonical_url)}<br>File: {html.escape(path)}"
-            f"<br>GitHub blob SHA: {html.escape(blob_sha)}<br>Scanner: {html.escape(scan['status'])}</p>"
+            f"<p>Repository: {html.escape(canonical_url)}<br>Scope: {html.escape(path)}"
+            f"<br>Commit SHA: {html.escape(metadata.get('commit_sha', 'not pinned for single-file scan'))}"
+            f"<br>GitHub blob SHA: {html.escape(metadata.get('blob_sha', 'see stored scan evidence'))}"
+            f"<br>Files scanned: {metadata['file_count']}<br>Scanner: {html.escape(scan['status'])}</p>"
             "<table border='1'><tr><th>Rule</th><th>Location</th><th>Severity</th><th>Message</th></tr>"
             f"{rows}</table>", encoding="utf-8",
         )
@@ -196,4 +224,5 @@ class VulnerabilityPipeline:
             "report_url": f"/api/analysis/reports/{result.id}/html",
             "vulnerable": None, "exploits_tested": 0, "vulnerabilities_confirmed": 0,
             "confidence_score": None, "findings": findings, "error": scan.get("error"),
+            "commit_sha": metadata.get("commit_sha"), "file_count": metadata["file_count"],
         }
