@@ -18,22 +18,31 @@ describe('Zorix frontend', () => {
   it('shows recorded evidence without calling it a confirmed exploit', async () => {
     localStorage.setItem('zorix_token', 'test-token')
     localStorage.setItem('zorix_email', 'analyst@example.com')
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => ({
       ok: true,
-      json: async () => ({ results: [{
+      json: async () => url.includes('/findings/0/review')
+        ? { finding_index: 0, status: 'false_positive', note: 'Safe input' }
+        : url.endsWith('/analysis/results/scan-1') ? { reviews: [] } : { results: [{
         id: 'scan-1', repository: 'https://github.com/example/project',
         affected_file: 'app.py', status: 'completed', finding_count: 1,
         commit_sha: null, file_count: 1,
         created_at: '2026-01-01T00:00:00',
         findings: [{ rule_id: 'os-system-call', file: 'app.py', line: 2,
           severity: 'ERROR', message: 'Potential command injection' }],
-      }] }),
-    })))
+      }] },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
     render(<App />)
     await waitFor(() => expect(screen.getByText('Potential command injection')).toBeTruthy())
     expect(screen.getByText('Not performed')).toBeTruthy()
     expect(screen.getByText('os-system-call')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Download SARIF' })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Review status'), { target: { value: 'false_positive' } })
+    fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Safe input' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save review' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(call =>
+      call[0] === '/api/analysis/results/scan-1/findings/0/review' && call[1]?.method === 'PUT'
+    )).toBe(true))
   })
 
   it('submits a pinned repository scan by default', async () => {
@@ -67,6 +76,7 @@ describe('Zorix frontend', () => {
       json: async () => url.includes('/compare/')
         ? { introduced: [], resolved: [], introduced_count: 1, resolved_count: 0,
             unchanged_count: 2, note: 'Manual review required' }
+        : url.includes('/analysis/results/') ? { reviews: [] }
         : { results: ['new', 'old'].map(id => ({
             id, repository: 'https://github.com/example/project', affected_file: '(repository)',
             status: 'completed', finding_count: 0, findings: [], file_count: 2,

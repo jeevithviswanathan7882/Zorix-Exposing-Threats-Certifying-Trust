@@ -197,6 +197,19 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert own_results.json()["total"] == 2
                 assert own_results.json()["results"][0]["commit_sha"] == "a" * 40
                 assert other_results.json()["total"] == 0
+                review_path = f"/api/analysis/results/{scan_id}/findings/0/review"
+                assert (await client.put(review_path, headers=bob, json={
+                    "status": "false_positive", "note": "Reviewed"})).status_code == 404
+                assert (await client.put(review_path, headers=alice, json={
+                    "status": "false_positive", "note": ""})).status_code == 422
+                assert (await client.put(f"/api/analysis/results/{scan_id}/findings/9/review",
+                                         headers=alice, json={"status": "open"})).status_code == 404
+                reviewed = await client.put(review_path, headers=alice, json={
+                    "status": "false_positive", "note": "Reviewed the source and confirmed safe input"})
+                assert reviewed.status_code == 200, reviewed.text
+                detail = await client.get(f"/api/analysis/results/{scan_id}", headers=alice)
+                assert detail.json()["reviews"][0]["status"] == "false_positive"
+                assert detail.json()["verification_status"] == "unverified"
                 repository_scan_id = repository_scan.json()["analysis_id"]
                 assert (await client.get(
                     f"/api/analysis/results/{repository_scan_id}/compare/{scan_id}", headers=alice

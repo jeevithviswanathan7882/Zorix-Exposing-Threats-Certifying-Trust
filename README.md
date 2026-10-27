@@ -12,6 +12,7 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 - Semgrep findings with rule ID, file, line, severity, and message
 - Authenticated HTML and SARIF 2.1.0 exports for completed scans
 - Owner-scoped comparison of findings between completed scans of the same repository
+- Per-finding review decisions (`open`, `investigating`, `false_positive`, `accepted_risk`) with notes
 - User registration, JWT sign-in, and per-user access to scan results and reports
 - Input checks for GitHub URLs and repository paths, a 200 KB file limit, and escaped HTML reports
 - Python integration tests, frontend unit tests, TypeScript checking, dependency audits, Trivy configuration and secret scanning, and Docker builds in CI
@@ -81,6 +82,8 @@ A successful response includes an `analysis_id`, commit SHA, file count, scanner
 
 Compare two completed scans of the same repository and scope with `GET /api/analysis/results/{analysis_id}/compare/{baseline_id}` or the comparison controls in the UI. The response lists introduced, resolved, and unchanged **static findings**. A finding disappearing does not prove that a vulnerability was fixed.
 
+Review a finding with `PUT /api/analysis/results/{analysis_id}/findings/{finding_index}/review` and a JSON body such as `{"status":"false_positive","note":"Reviewed data flow; input is constant"}`. The API requires a justification for `false_positive` and `accepted_risk`. Reviews appear in the scan detail response and are scoped to the scan owner. Review status is an analyst decision, not automated exploit validation.
+
 ## Verification
 
 Run these checks before opening a pull request:
@@ -106,7 +109,7 @@ Repository scans resolve the default branch to a commit SHA, enumerate its Git t
 ## Next milestones
 
 1. Normalize findings from additional tools into one evidence model, starting with dependency and container scanning.
-2. Add review states, false-positive handling, and richer fix-and-rescan workflows.
+2. Add reviewer audit history and richer fix-and-rescan workflows.
 3. Add authenticated, opt-in dynamic testing against explicitly allowlisted local targets.
 4. Add CI policy gates and export formats for security workflows.
 

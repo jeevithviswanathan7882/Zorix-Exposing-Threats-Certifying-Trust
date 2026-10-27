@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import './App.css'
 import './Comparison.css'
+import './Review.css'
 
 type Finding = { rule_id: string; file: string; line: number | null; severity: string; message: string }
 type Scan = {
@@ -16,6 +17,8 @@ type Scan = {
 }
 type ScanResponse = { status: string; error?: string; findings: Finding[]; analysis_id: string }
 type Comparison = { introduced: Finding[]; resolved: Finding[]; introduced_count: number; resolved_count: number; unchanged_count: number; note: string }
+type ReviewStatus = 'open' | 'investigating' | 'false_positive' | 'accepted_risk'
+type Review = { finding_index: number; status: ReviewStatus; note: string }
 
 const API = '/api'
 
@@ -46,6 +49,7 @@ export default function App() {
   const [selected, setSelected] = useState<Scan | null>(null)
   const [baselineId, setBaselineId] = useState('')
   const [comparison, setComparison] = useState<Comparison | null>(null)
+  const [reviews, setReviews] = useState<Record<number, Review>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -63,6 +67,17 @@ export default function App() {
 
   useEffect(() => { void loadScans() }, [loadScans])
   useEffect(() => { setBaselineId(''); setComparison(null) }, [selected?.id])
+  useEffect(() => {
+    if (!selected || !token) return
+    let cancelled = false
+    setReviews({})
+    void request<{ reviews: Review[] }>(`/analysis/results/${selected.id}`, token)
+      .then(data => {
+        if (!cancelled) setReviews(Object.fromEntries(data.reviews.map(review => [review.finding_index, review])))
+      })
+      .catch(err => { if (!cancelled) setError((err as Error).message) })
+    return () => { cancelled = true }
+  }, [selected?.id, token])
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault()
@@ -124,6 +139,20 @@ export default function App() {
       setComparison(await request<Comparison>(
         `/analysis/results/${selected.id}/compare/${baselineId}`, token,
       ))
+    } catch (err) { setError((err as Error).message) }
+  }
+
+  const saveReview = async (index: number) => {
+    if (!selected) return
+    const review = reviews[index] || { finding_index: index, status: 'open', note: '' }
+    setError(''); setNotice('')
+    try {
+      const saved = await request<Review>(
+        `/analysis/results/${selected.id}/findings/${index}/review`, token,
+        { method: 'PUT', body: JSON.stringify({ status: review.status, note: review.note }) },
+      )
+      setReviews(current => ({ ...current, [index]: saved }))
+      setNotice('Finding review saved.')
     } catch (err) { setError((err as Error).message) }
   }
 
@@ -213,6 +242,22 @@ export default function App() {
                 selected.findings.map((finding, index) => <article className="finding" key={`${finding.rule_id}-${index}`}>
                   <div><span className="tag">{finding.severity}</span><strong>{finding.rule_id}</strong></div>
                   <small>{finding.file}:{finding.line || '?'}</small><p>{finding.message}</p>
+                  <div className="review-controls">
+                    <label>Review status<select value={reviews[index]?.status || 'open'} onChange={event =>
+                      setReviews(current => ({ ...current, [index]: {
+                        finding_index: index, status: event.target.value as ReviewStatus,
+                        note: current[index]?.note || '',
+                      } }))}>
+                      <option value="open">Open</option><option value="investigating">Investigating</option>
+                      <option value="false_positive">False positive</option><option value="accepted_risk">Accepted risk</option>
+                    </select></label>
+                    <label>Review note<textarea maxLength={2000} value={reviews[index]?.note || ''} onChange={event =>
+                      setReviews(current => ({ ...current, [index]: {
+                        finding_index: index, status: current[index]?.status || 'open',
+                        note: event.target.value,
+                      } }))} /></label>
+                    <button className="secondary" onClick={() => void saveReview(index)}>Save review</button>
+                  </div>
                 </article>)}
             </> : <p className="muted">Select a scan to see its evidence.</p>}
           </section>

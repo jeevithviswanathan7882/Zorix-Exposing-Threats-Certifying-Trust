@@ -4,16 +4,18 @@ import asyncio
 import json
 import logging
 from uuid import UUID
+from typing import Literal
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_current_user
 from backend.database import get_db
-from backend.models import AnalysisResult, BugReport, Project, Report, ScanResult, User
+from backend.models import AnalysisResult, BugReport, FindingReview, Project, Report, ScanResult, User
 from backend.services.pipeline_orchestrator import VulnerabilityPipeline
 from backend.services.sarif_export import build_sarif
 from backend.services.scan_comparison import compare_findings
@@ -35,6 +37,11 @@ class AnalyzeRequest(BaseModel):
 class RepositoryScanRequest(BaseModel):
     repo_url: HttpUrl
     github_token: str | None = None
+
+
+class FindingReviewRequest(BaseModel):
+    status: Literal["open", "investigating", "false_positive", "accepted_risk"]
+    note: str = Field(default="", max_length=2000)
 
 
 async def _owned_analysis(db: AsyncSession, user: User, analysis_id: UUID) -> AnalysisResult:
@@ -163,6 +170,10 @@ async def get_analysis_results(
         ScanResult.analysis_result_id == analysis_id
     ))).scalar_one_or_none()
     evidence = json.loads(scan.scan_output) if scan and scan.scan_output else {}
+    reviews = (await db.execute(select(FindingReview).where(
+        FindingReview.analysis_result_id == analysis_id,
+        FindingReview.user_id == user.id,
+    ).order_by(FindingReview.finding_index))).scalars().all()
     return {
         "analysis_id": str(analysis_id),
         "root_cause": analysis.root_cause,
@@ -170,12 +181,57 @@ async def get_analysis_results(
         "verification_status": "unverified",
         "findings": evidence.get("findings", []),
         "finding_count": scan.finding_count if scan else 0,
+        "reviews": [{"finding_index": review.finding_index, "status": review.status,
+                     "note": review.note, "updated_at": review.updated_at.isoformat()}
+                    for review in reviews],
         "commit_sha": evidence.get("commit_sha"),
         "file_count": evidence.get("file_count", 1),
         "cvss_score": None,
         "report_url": f"/api/analysis/reports/{analysis_id}/html",
         "created_at": analysis.created_at.isoformat(),
     }
+
+
+@router.put("/results/{analysis_id}/findings/{finding_index}/review")
+async def review_finding(
+    analysis_id: UUID,
+    finding_index: int,
+    request: FindingReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await _owned_analysis(db, user, analysis_id)
+    scan = (await db.execute(select(ScanResult).where(
+        ScanResult.analysis_result_id == analysis_id
+    ))).scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan evidence not found")
+    evidence = json.loads(scan.scan_output)
+    if evidence.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Only completed scans can be reviewed")
+    findings = evidence.get("findings", [])
+    if finding_index < 0 or finding_index >= len(findings):
+        raise HTTPException(status_code=404, detail="Finding not found")
+    note = request.note.strip()
+    if request.status in ("false_positive", "accepted_risk") and not note:
+        raise HTTPException(status_code=422, detail="A justification is required for this review status")
+    review = (await db.execute(select(FindingReview).where(
+        FindingReview.analysis_result_id == analysis_id,
+        FindingReview.finding_index == finding_index,
+    ))).scalar_one_or_none()
+    if review is None:
+        review = FindingReview(
+            analysis_result_id=analysis_id, user_id=user.id,
+            finding_index=finding_index, status=request.status, note=note,
+        )
+        db.add(review)
+    else:
+        review.status = request.status
+        review.note = note
+        review.updated_at = datetime.utcnow()
+    await db.commit()
+    return {"finding_index": finding_index, "status": review.status,
+            "note": review.note, "updated_at": review.updated_at.isoformat()}
 
 
 @router.get("/results/{analysis_id}/compare/{baseline_id}")

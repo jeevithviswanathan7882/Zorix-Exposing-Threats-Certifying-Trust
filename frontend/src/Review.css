@@ -1,0 +1,25 @@
+.finding > .review-controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(220px, 2fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.review-controls textarea {
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  padding: 10px 12px;
+  color: #f5f7fa;
+  background: #0e1520;
+  border: 1px solid #39485d;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.review-controls button { white-space: nowrap; }
+
+@media (max-width: 700px) {
+  .finding > .review-controls { grid-template-columns: 1fr; }
+}

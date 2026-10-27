@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, Float, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, Float, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.orm import relationship
@@ -67,6 +67,21 @@ class Project(Base):
     # Relationships
     user = relationship("User", back_populates="projects")
     bug_reports = relationship("BugReport", back_populates="project")
+
+
+class FindingReview(Base):
+    """A user's review decision for one immutable finding in one scan."""
+
+    __tablename__ = "finding_reviews"
+    __table_args__ = (UniqueConstraint("analysis_result_id", "finding_index"),)
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_result_id = Column(GUID(), ForeignKey("analysis_results.id"), nullable=False, index=True)
+    user_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
+    finding_index = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False)
+    note = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class BugReport(Base):
