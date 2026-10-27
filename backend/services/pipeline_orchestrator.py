@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.models import AnalysisResult, BugReport, Project, Report, ScanResult
-from backend.services.repository_scanner import fetch_repository_snapshot, scan_files
+from backend.services.repository_scanner import SHA_PATTERN, fetch_repository_snapshot, scan_files
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -69,21 +69,38 @@ def validate_target(repo_url: str, affected_file: str) -> tuple[str, str, str]:
     return owner, repo, str(path)
 
 
-async def fetch_source(owner: str, repo: str, path: str, token: str | None = None) -> tuple[str, str]:
+async def fetch_source(owner: str, repo: str, path: str, token: str | None = None) -> tuple[str, str, str]:
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(path, safe='/')}"
+    root = f"https://api.github.com/repos/{owner}/{repo}"
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(api_url, headers=headers)
+        repository = await client.get(root, headers=headers)
+        repository.raise_for_status()
+        branch = repository.json().get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            raise ValueError("Repository has no default branch")
+        commit = await client.get(f"{root}/commits/{quote(branch, safe='')}", headers=headers)
+        commit.raise_for_status()
+        commit_sha = commit.json().get("sha", "")
+        if not isinstance(commit_sha, str) or not SHA_PATTERN.fullmatch(commit_sha):
+            raise ValueError("GitHub did not return a valid commit SHA")
+        api_url = f"{root}/contents/{quote(path, safe='/')}"
+        response = await client.get(api_url, headers=headers, params={"ref": commit_sha})
         response.raise_for_status()
         data = response.json()
     if data.get("type") != "file" or data.get("encoding") != "base64":
         raise ValueError("GitHub did not return a regular file")
-    source = base64.b64decode(data.get("content", ""), validate=False)
+    encoded = data.get("content", "")
+    if not isinstance(encoded, str):
+        raise ValueError("GitHub returned invalid file content")
+    source = base64.b64decode("".join(encoded.split()), validate=True)
     if len(source) > MAX_SOURCE_BYTES:
         raise ValueError("Affected file exceeds the 200 KB analysis limit")
-    return source.decode("utf-8", errors="replace"), data.get("sha", "")
+    blob_sha = data.get("sha", "")
+    if not isinstance(blob_sha, str) or not SHA_PATTERN.fullmatch(blob_sha):
+        raise ValueError("GitHub did not return a valid blob SHA")
+    return source.decode("utf-8", errors="replace"), blob_sha, commit_sha
 
 
 def run_semgrep(source: str, filename: str) -> dict:
@@ -129,11 +146,11 @@ class VulnerabilityPipeline:
         if db is None or user_id is None:
             raise ValueError("A database session and authenticated user are required")
         owner, repo, path = validate_target(repo_url, affected_file)
-        source, blob_sha = await fetch_source(owner, repo, path, github_token or settings.GITHUB_TOKEN)
+        source, blob_sha, commit_sha = await fetch_source(owner, repo, path, github_token or settings.GITHUB_TOKEN)
         scan = await asyncio.to_thread(run_semgrep, source, path)
         return await self._record_scan(
             db, user_id, owner, repo, path, vulnerability_type, affected_line,
-            scan, {"blob_sha": blob_sha, "file_count": 1},
+            scan, {"blob_sha": blob_sha, "commit_sha": commit_sha, "file_count": 1},
         )
 
     async def run_repository_pipeline(

@@ -18,7 +18,7 @@ flowchart LR
   CI --> Images[Docker image builds]
 ```
 
-The repository scanner resolves the default branch to a commit SHA, gets the Git tree, and fetches selected blobs by SHA. It fails on truncated trees or limit violations. Semgrep scans the fetched files. Results, reviews, comparisons, and reports require the scan owner's token. Source contents and per-scan GitHub tokens are not stored in scan records.
+Both scan modes resolve the default branch to a commit SHA. Repository scans get the Git tree and fetch selected blobs by SHA; individual file scans fetch with the commit SHA as the GitHub API `ref`. Repository scans fail on truncated trees or limit violations. Semgrep scans the fetched files. Results, reviews, comparisons, and reports require the scan owner's token. Source contents and per-scan GitHub tokens are not stored in scan records.
 
 ## Evidence by role
 

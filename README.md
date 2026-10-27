@@ -6,7 +6,7 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 
 ## Current capabilities
 
-- GitHub repository scans pinned to the default branch's commit SHA, plus individual file scans
+- GitHub repository and individual file scans pinned to the default branch's commit SHA
 - Python, JavaScript, and TypeScript source (`.py`, `.js`, `.jsx`, `.ts`, `.tsx`)
 - Repository limits: 100 supported files, 200 KB per file, 2 MB total; oversized or truncated scans fail explicitly
 - Semgrep findings with rule ID, file, line, severity, and message
@@ -106,7 +106,7 @@ The backend tests cover target validation, commit-pinned repository fetching, tr
 
 A Semgrep match identifies code that fits a rule. It is not a confirmed vulnerability. Review the source and its data flow, reproduce the issue in an authorized test environment, and retest after a fix. Zorix deliberately reports no exploit confirmation and no CVSS value at this stage. A clean scan also does not prove that a file is secure.
 
-Repository scans resolve the default branch to a commit SHA, enumerate its Git tree, and fetch each selected file by blob SHA. They reject truncated trees and limit violations instead of silently reporting partial coverage. Generated and dependency directories are excluded. Individual file scans still fetch the default branch at request time; their blob SHA identifies the content, but they are not pinned to a commit. Dynamic testing, dependency and container scanning, formal CVSS vectors, and AI-assisted review are planned work, not current features.
+Repository scans resolve the default branch to a commit SHA, enumerate its Git tree, and fetch each selected file by blob SHA. They reject truncated trees and limit violations instead of silently reporting partial coverage. Generated and dependency directories are excluded. Individual file scans also resolve the default branch to a commit and fetch the file with that SHA as the GitHub API `ref`. Dynamic testing, dependency and container scanning, formal CVSS vectors, and AI-assisted review are planned work, not current features.
 
 ## Next milestones
 

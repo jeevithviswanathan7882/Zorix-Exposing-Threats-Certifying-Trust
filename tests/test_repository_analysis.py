@@ -43,6 +43,31 @@ def test_semgrep_reports_real_rule_and_clean_file(monkeypatch):
     assert clean["findings"] == []
 
 
+def test_single_file_fetch_uses_pinned_commit(monkeypatch):
+    commit_sha = "a" * 40
+    blob_sha = "b" * 40
+    requested_ref = []
+
+    def handler(request):
+        if request.url.path == "/repos/example/project":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.url.path.endswith("/commits/main"):
+            return httpx.Response(200, json={"sha": commit_sha})
+        if request.url.path.endswith("/contents/src/app.py"):
+            requested_ref.append(request.url.params.get("ref"))
+            return httpx.Response(200, json={"type": "file", "encoding": "base64",
+                                             "sha": blob_sha,
+                                             "content": base64.b64encode(b"print('hello')\n").decode() + "\n"})
+        return httpx.Response(404)
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(pipeline_module.httpx, "AsyncClient",
+                        lambda **kwargs: client_type(transport=httpx.MockTransport(handler), **kwargs))
+    source, blob, commit = asyncio.run(pipeline_module.fetch_source("example", "project", "src/app.py"))
+    assert (source, blob, commit) == ("print('hello')\n", blob_sha, commit_sha)
+    assert requested_ref == [commit_sha]
+
+
 def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monkeypatch):
     from backend.services import repository_scanner
 
@@ -144,7 +169,7 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 yield session
 
         async def fake_fetch(owner, repo, path, token=None):
-            return "import os\nos.system(user_input)\n", "blob123"
+            return "import os\nos.system(user_input)\n", "b" * 40, "a" * 40
 
         monkeypatch.setattr(pipeline_module, "fetch_source", fake_fetch)
         monkeypatch.setattr(pipeline_module, "run_semgrep", lambda source, filename: {
@@ -186,6 +211,7 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert body["vulnerable"] is None
                 assert body["score"] is None
                 assert body["findings"][0]["rule_id"] == "os-system-call"
+                assert body["commit_sha"] == "a" * 40
                 scan_id = body["analysis_id"]
                 repository_scan = await client.post("/api/analysis/repository", json={
                     "repo_url": "https://github.com/example/project"}, headers=alice)
