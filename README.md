@@ -19,6 +19,8 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 
 The active application is in `backend/` and `frontend/`. `security/semgrep_rules.yaml` contains the current detection rules. `tests/` contains backend and scanner tests. The Docker configuration runs PostgreSQL, the API, and the frontend. The CI workflow is in `.github/workflows/ci.yml`.
 
+See [project scope and portfolio evidence](docs/PROJECT_SCOPE.md) for the architecture, role coverage, and remaining gaps.
+
 ## Quick start
 
 Requirements: Python 3.11, Node.js 22 or newer, npm, and access to the GitHub API. Docker is optional for local development.
