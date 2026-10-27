@@ -29,8 +29,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./reports:/app/reports
-      - ./logs:/app/logs
+      - reports_data:/app/reports
+      - logs_data:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,9 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:${ZORIX_FRONTEND_PORT:-3000}:80"
+      - "127.0.0.1:${ZORIX_FRONTEND_PORT:-3000}:8080"
 
 volumes:
   postgres_data:
+  reports_data:
+  logs_data:

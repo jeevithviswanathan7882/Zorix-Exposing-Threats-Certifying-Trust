@@ -65,3 +65,14 @@ jobs:
         run: docker compose config --quiet
       - name: Build application images
         run: docker compose build backend frontend
+
+  configuration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan secrets and configuration with Trivy
+        run: |
+          docker run --rm --volume "$PWD:/workspace:ro" \
+            aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+            fs --scanners misconfig,secret --severity HIGH,CRITICAL \
+            --skip-dirs /workspace/.git --exit-code 1 /workspace

@@ -3,7 +3,7 @@ FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     git \
@@ -17,6 +17,11 @@ COPY backend/scanner-requirements.txt ./scanner-requirements.txt
 RUN python -m venv /opt/semgrep \
     && /opt/semgrep/bin/python -m pip install --no-cache-dir -r scanner-requirements.txt
 ENV SEMGREP_PATH=/opt/semgrep/bin/semgrep
+RUN groupadd --system --gid 10001 zorix \
+    && useradd --system --uid 10001 --gid zorix --create-home --home-dir /home/zorix zorix \
+    && mkdir -p /app/reports /app/logs \
+    && chown zorix:zorix /app/reports /app/logs
+ENV HOME=/home/zorix
 
 
 # STAGE 2 - Development
@@ -30,6 +35,7 @@ COPY security/ ./security/
 
 COPY docker/backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+USER zorix
 
 ENTRYPOINT ["/entrypoint.sh"]
 
@@ -45,5 +51,6 @@ COPY security/ ./security/
 
 COPY docker/backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+USER zorix
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -14,7 +14,7 @@ Zorix is a FastAPI and React project for reviewing GitHub source code. It can sc
 - Owner-scoped comparison of findings between completed scans of the same repository
 - User registration, JWT sign-in, and per-user access to scan results and reports
 - Input checks for GitHub URLs and repository paths, a 200 KB file limit, and escaped HTML reports
-- Python integration tests, frontend unit tests, TypeScript checking, npm audit, and Docker builds in CI
+- Python integration tests, frontend unit tests, TypeScript checking, dependency audits, Trivy configuration and secret scanning, and Docker builds in CI
 
 The active application is in `backend/` and `frontend/`. `security/semgrep_rules.yaml` contains the current detection rules. `tests/` contains backend and scanner tests. The Docker configuration runs PostgreSQL, the API, and the frontend. The CI workflow is in `.github/workflows/ci.yml`.
 
@@ -60,7 +60,7 @@ Open <http://localhost:3000>, register, sign in, and enter an HTTPS GitHub repos
 docker compose up --build
 ```
 
-The frontend is available at <http://localhost:3000> and the API at <http://localhost:8000>. Compose uses `backend/.env.dev`, which contains **development credentials**. Change these before any deployment outside a trusted local environment. The current Compose file does not mount the Docker socket and does not start Ollama or execute exploit payloads.
+The frontend is available at <http://localhost:3000> and the API at <http://localhost:8000>. The application containers run as non-root users; reports and logs use named Docker volumes so report downloads survive container restarts. Compose uses `backend/.env.dev`, which contains **development credentials**. Change these before any deployment outside a trusted local environment. The current Compose file does not mount the Docker socket and does not start Ollama or execute exploit payloads.
 
 If those host ports are already in use, set `ZORIX_FRONTEND_PORT`, `ZORIX_API_PORT`, or `ZORIX_DB_PORT` before running Compose. For example: `ZORIX_FRONTEND_PORT=13000 ZORIX_API_PORT=18000 docker compose up --build`.
 
