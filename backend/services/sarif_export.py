@@ -14,26 +14,30 @@ def build_sarif(evidence: dict) -> dict:
     for finding in findings:
         path = str(finding["file"])
         line = finding.get("line")
-        if not isinstance(line, int) or line < 1:
-            continue
-        results.append({
+        result = {
             "ruleId": str(finding["rule_id"]),
             "level": levels.get(str(finding.get("severity", "INFO")).upper(), "note"),
             "message": {"text": str(finding.get("message", ""))},
-            "properties": {"verification_status": "unverified"},
-            "locations": [{"physicalLocation": {
-                "artifactLocation": {"uri": quote(path, safe="/"), "uriBaseId": "%SRCROOT%"},
-                "region": {"startLine": line},
-            }}],
-        })
+            "properties": {"verification_status": "unverified",
+                           **{key: finding[key] for key in ("source_tool", "source_severity", "package") if key in finding}},
+        }
+        if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+            result['locations'] = [{'physicalLocation': {
+                'artifactLocation': {'uri': quote(path, safe='/'), 'uriBaseId': '%SRCROOT%'},
+                'region': {'startLine': line},
+            }}]
+        results.append(result)
     return {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
-            "tool": {"driver": {"name": "Zorix Semgrep", "rules": rules}},
+            "tool": {"driver": {"name": "Zorix imported evidence" if evidence.get("imported") else "Zorix Semgrep", "rules": rules}},
             "originalUriBaseIds": {"%SRCROOT%": {"uri": "file:///repo/"}},
             "results": results,
             "properties": {"commit_sha": evidence.get("commit_sha"),
-                           "rules_sha256": evidence.get("rules_sha256")},
+                           "rules_sha256": evidence.get("rules_sha256"),
+                           "imported": evidence.get("imported", False),
+                           "source_tools": evidence.get("source_tools", ["Semgrep"]),
+                           "artifact_sha256": evidence.get("artifact_sha256")},
         }],
     }

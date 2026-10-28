@@ -4,6 +4,7 @@ from pydantic import field_validator, computed_field
 from functools import lru_cache
 from typing import Optional
 from sqlalchemy.engine import URL
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -19,6 +20,8 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
+    SECRET_KEY_FILE: str | None = None
+    POSTGRES_PASSWORD_FILE: str | None = None
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
@@ -69,6 +72,16 @@ class Settings(BaseSettings):
     NOTIFICATION_EMAIL: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    def model_post_init(self, __context):
+        for field in ('SECRET_KEY', 'POSTGRES_PASSWORD'):
+            filename = getattr(self, f'{field}_FILE')
+            if filename:
+                with Path(filename).open('rb') as source:
+                    value = source.read(4097)
+                if len(value) > 4096 or not value.rstrip(b'\r\n'):
+                    raise ValueError(f'{field}_FILE must contain a nonempty secret below 4096 bytes')
+                setattr(self, field, value.decode('utf-8').rstrip('\r\n'))
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod

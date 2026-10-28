@@ -71,6 +71,7 @@ def test_database_migrations_create_current_schema(tmp_path):
         await engine.dispose()
     asyncio.run(create_legacy_schema())
     with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DROP TABLE scan_jobs')
         connection.execute('DROP TABLE finding_review_events')
         connection.execute('DROP TABLE finding_reviews')
     env["ALEMBIC_DATABASE_URL"] = legacy_url
@@ -82,6 +83,7 @@ def test_database_migrations_create_current_schema(tmp_path):
         assert result.returncode == 0, result.stderr or result.stdout
 
     with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DROP TABLE scan_jobs')
         connection.execute('DROP TABLE finding_review_events')
         connection.execute('DELETE FROM alembic_version')
         connection.execute('ALTER TABLE users ADD COLUMN unexpected TEXT')
@@ -399,6 +401,32 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert sarif_result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "app.py"
                 assert (await client.get(f"/api/analysis/reports/{repository_scan.json()['analysis_id']}/sarif", headers=alice)).json()["runs"][0]["results"] == []
                 assert (await client.get("/api/admin/ollama-prompts", headers=alice)).status_code == 404
+                imported_payload = {
+                    "repo_url": "https://github.com/example/project", "commit_sha": "a" * 40,
+                    "report_format": "trivy", "report": {"SchemaVersion": 2, "Results": [{
+                        "Target": "demo-image", "Vulnerabilities": [{"VulnerabilityID": "CVE-DEMO",
+                        "PkgName": "demo", "InstalledVersion": "1", "FixedVersion": "2", "Severity": "HIGH"}],
+                    }]},
+                }
+                assert (await client.post('/api/analysis/import', json=imported_payload)).status_code in (401, 403)
+                imported = await client.post('/api/analysis/import', json=imported_payload, headers=alice)
+                assert imported.status_code == 200, imported.text
+                imported_id = imported.json()['analysis_id']
+                details = (await client.get(f'/api/analysis/results/{imported_id}', headers=alice)).json()
+                event_response = await client.get(f'/api/analysis/reports/{imported_id}/json', headers=alice)
+                assert event_response.status_code == 200
+                assert event_response.json()['policy']['status'] == 'attention_required'
+                assert (await client.get(f'/api/analysis/reports/{imported_id}/json', headers=bob)).status_code == 404
+                assert details['imported'] is True and details['source_tools'] == ['Trivy']
+                assert len(details['artifact_sha256']) == 64
+                assert details['findings'][0]['package']['FixedVersion'] == '2'
+                exported = (await client.get(f'/api/analysis/reports/{imported_id}/sarif', headers=alice)).json()
+                assert exported['runs'][0]['results'][0]['ruleId'] == 'CVE-DEMO'
+                assert (await client.get(f'/api/analysis/results/{imported_id}', headers=bob)).status_code == 404
+                assert (await client.post('/api/analysis/import', content=b'x' * 1000001, headers=alice)).status_code == 413
+                imported_payload['report'] = {'invalid': True}
+                assert (await client.post('/api/analysis/import', json=imported_payload, headers=alice)).status_code == 422
+
         finally:
             app.dependency_overrides.clear()
             await engine.dispose()

@@ -194,6 +194,8 @@ class VulnerabilityPipeline:
         vulnerability_type: str, affected_line: int | None, scan: dict, metadata: dict,
     ) -> dict:
         findings = scan["findings"]
+        scanner_name = scan.get("scanner_name", "semgrep")
+        evidence_label = "Imported tool report" if metadata.get("imported") else "Semgrep"
         canonical_url = f"https://github.com/{owner}/{repo}"
 
         project = (await db.execute(select(Project).where(
@@ -206,16 +208,16 @@ class VulnerabilityPipeline:
 
         bug = BugReport(
             project_id=project.id, title=f"Static scan: {path}",
-            description="Semgrep static analysis; findings require review",
+            description=f"{evidence_label}; findings require review",
             repository_url=canonical_url, vulnerability_type=vulnerability_type,
-            affected_file=path, affected_line=affected_line, source="semgrep",
+            affected_file=path, affected_line=affected_line, source=scanner_name,
             severity="UNVERIFIED" if findings else "UNKNOWN",
         )
         db.add(bug)
         await db.flush()
         result = AnalysisResult(
             bug_report_id=bug.id,
-            root_cause=f"Semgrep reported {len(findings)} potential issue(s) in {path}. Manual review required."
+            root_cause=f"{evidence_label} reported {len(findings)} potential issue(s) in {path}. Manual review required."
             if scan["status"] == "completed" else f"Static scan unavailable: {scan.get('error', 'unknown error')}",
             confidence_score=0.0,
         )
@@ -223,9 +225,10 @@ class VulnerabilityPipeline:
         await db.flush()
         evidence = {"status": scan["status"], **metadata,
                     "findings": findings, "error": scan.get("error"),
-                    "rules_sha256": scan.get("rules_sha256")}
+                    "rules_sha256": scan.get("rules_sha256"),
+                    "source_tools": metadata.get("source_tools", ["Semgrep"])}
         db.add(ScanResult(
-            analysis_result_id=result.id, scan_type="static", scanner_name="semgrep",
+            analysis_result_id=result.id, scan_type="static", scanner_name=scanner_name,
             finding_count=len(findings),
             high_count=sum(f["severity"] == "ERROR" for f in findings),
             medium_count=sum(f["severity"] == "WARNING" for f in findings),
@@ -235,17 +238,18 @@ class VulnerabilityPipeline:
         report_path = Path(settings.REPORTS_DIR) / f"analysis_{result.id}.html"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         rows = "".join(
-            f"<tr><td>{html.escape(str(f['rule_id']))}</td><td>{html.escape(str(f['file']))}:{f['line']}</td>"
+            f"<tr><td>{html.escape(str(f['rule_id']))}</td><td>{html.escape(str(f['file']))}:{html.escape(str(f.get('line') or '—'))}</td>"
             f"<td>{html.escape(str(f['severity']))}</td><td>{html.escape(str(f['message']))}</td></tr>"
             for f in findings
         )
         report_path.write_text(
-            "<!doctype html><meta charset='utf-8'><title>Zorix static scan</title>"
-            "<h1>Zorix static scan</h1><p>Potential findings require manual review. "
+            "<!doctype html><meta charset='utf-8'><title>Zorix security evidence</title>"
+            "<h1>Zorix security evidence</h1><p>Potential findings require manual review. "
             "No exploit validation or CVSS scoring was performed.</p>"
-            f"<p>Repository: {html.escape(canonical_url)}<br>Scope: {html.escape(path)}"
+            f"<p>Evidence origin: {html.escape(evidence_label)}<br>Repository: {html.escape(canonical_url)}<br>Scope: {html.escape(path)}"
             f"<br>Commit SHA: {html.escape(metadata.get('commit_sha', 'not pinned for single-file scan'))}"
             f"<br>GitHub blob SHA: {html.escape(metadata.get('blob_sha', 'see stored scan evidence'))}"
+            f"<br>Artifact SHA-256: {html.escape(metadata.get('artifact_sha256') or 'not imported')}"
             f"<br>Rules SHA-256: {html.escape(scan.get('rules_sha256') or 'not recorded')}"
             f"<br>Files scanned: {metadata['file_count']}<br>Scanner: {html.escape(scan['status'])}</p>"
             "<table border='1'><tr><th>Rule</th><th>Location</th><th>Severity</th><th>Message</th></tr>"

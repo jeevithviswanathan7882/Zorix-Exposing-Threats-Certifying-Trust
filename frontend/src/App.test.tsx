@@ -9,6 +9,25 @@ afterEach(() => {
 })
 
 describe('Zorix frontend', () => {
+  it('imports a tool report with its repository and reported commit', async () => {
+    localStorage.setItem('zorix_token', 'test-token')
+    const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => ({
+      ok: true, json: async () => ({ results: [] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    fireEvent.click(screen.getByText('Import a security tool report'))
+    fireEvent.change(screen.getByLabelText('Import repository URL'), { target: { value: 'https://github.com/example/project' } })
+    fireEvent.change(screen.getByLabelText('Reported commit SHA'), { target: { value: 'a'.repeat(40) } })
+    const file = new File(['{}'], 'report.json', { type: 'application/json' })
+    Object.defineProperty(file, 'text', { value: async () => '{"version":"2.1.0","runs":[]}' })
+    fireEvent.change(screen.getByLabelText('Report JSON file'), { target: { files: [file] } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Import report' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: 'Import report' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0] === '/api/analysis/import')).toBe(true))
+    const call = fetchMock.mock.calls.find(call => call[0] === '/api/analysis/import')
+    expect(JSON.parse(String(call?.[1]?.body)).commit_sha).toBe('a'.repeat(40))
+  })
   it('shows sign in and registration without a token', () => {
     render(<App />)
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeTruthy()
@@ -82,12 +101,12 @@ describe('Zorix frontend', () => {
     )).toBe(true))
   })
 
-  it('submits a pinned repository scan by default', async () => {
+  it('queues a pinned repository scan by default', async () => {
     localStorage.setItem('zorix_token', 'test-token')
     const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => ({
       ok: true,
-      json: async () => url.endsWith('/analysis/repository')
-        ? { status: 'completed', findings: [], analysis_id: 'scan-2' }
+      json: async () => url.endsWith('/jobs')
+        ? { id: 'job-2', state: 'queued', jobs: [] }
         : { results: [] },
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -100,8 +119,8 @@ describe('Zorix frontend', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Run static scan' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(call =>
-      call[0] === '/api/analysis/repository')).toBe(true))
-    const request = fetchMock.mock.calls.find(call => call[0] === '/api/analysis/repository')
+      call[0] === '/api/jobs' && call[1]?.method === 'POST')).toBe(true))
+    const request = fetchMock.mock.calls.find(call => call[0] === '/api/jobs' && call[1]?.method === 'POST')
     expect(JSON.parse(String(request?.[1]?.body)).github_token).toBe('temporary-token')
     await waitFor(() => expect((screen.getByLabelText('GitHub token (optional)') as HTMLInputElement).value).toBe(''))
   })

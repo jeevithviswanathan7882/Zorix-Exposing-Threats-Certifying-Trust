@@ -7,9 +7,11 @@ from uuid import UUID
 from typing import Literal
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, ValidationError
+from backend.services.evidence_import import normalize_report, MAX_REPORT_BYTES
+from backend.services.pipeline_orchestrator import validate_target
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +21,13 @@ from backend.models import AnalysisResult, BugReport, FindingReview, FindingRevi
 from backend.services.pipeline_orchestrator import VulnerabilityPipeline
 from backend.services.sarif_export import build_sarif
 from backend.services.scan_comparison import compare_findings
+from backend.services.security_event import build_security_event
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 pipeline = VulnerabilityPipeline()
-_scan_slots = asyncio.Semaphore(2)
+from backend.services.scan_jobs import scan_slots as _scan_slots, manager as job_manager, JobLimitError
 
 
 class AnalyzeRequest(BaseModel):
@@ -42,6 +46,41 @@ class RepositoryScanRequest(BaseModel):
 class FindingReviewRequest(BaseModel):
     status: Literal["open", "investigating", "false_positive", "accepted_risk"]
     note: str = Field(default="", max_length=2000)
+
+
+class EvidenceImportRequest(BaseModel):
+    repo_url: HttpUrl
+    commit_sha: str = Field(pattern=r'^[a-fA-F0-9]{40}$')
+    report_format: Literal['sarif', 'trivy', 'bandit', 'gitleaks', 'zap', 'nuclei', 'checkov']
+    report: dict
+
+
+@router.post('/import')
+async def import_evidence(
+    request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_REPORT_BYTES:
+            raise HTTPException(status_code=413, detail='Import exceeds the 1 MB request limit')
+    try:
+        payload = EvidenceImportRequest.model_validate_json(bytes(body))
+        owner, repo, _ = validate_target(str(payload.repo_url), 'import.py')
+        findings, provenance = normalize_report(payload.report, payload.report_format)
+    except (ValueError, TypeError, AttributeError, KeyError, IndexError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail='Invalid evidence report: check format, repository, commit, and report limits') from exc
+    try:
+        async with job_manager.admission:
+            await job_manager.check_quota(db, user.id)
+            return await pipeline._record_scan(
+                db, user.id, owner, repo, f'(import: {payload.report_format})', 'IMPORTED_EVIDENCE', None,
+                {'status': 'completed', 'findings': findings, 'scanner_name': 'imported'},
+                {'commit_sha': payload.commit_sha.lower(), 'file_count': 0, **provenance},
+            )
+    except JobLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
 
 
 async def _owned_analysis(db: AsyncSession, user: User, analysis_id: UUID) -> AnalysisResult:
@@ -74,19 +113,16 @@ async def analyze_vulnerability(
         except TimeoutError as exc:
             raise HTTPException(status_code=429, detail="Scanner is busy; retry later") from exc
         try:
-            return await pipeline.run_full_pipeline(
-                repo_url=str(request.repo_url),
-                vulnerability_type=request.vulnerability_type,
-                affected_file=request.affected_file,
-                affected_line=request.affected_line,
-                github_token=request.github_token,
-                db=db,
-                user_id=user.id,
+            return await job_manager.run_sync(
+                db, user.id, str(request.repo_url), request.affected_file,
+                request.github_token, request.vulnerability_type, request.affected_line,
             )
         finally:
             _scan_slots.release()
     except HTTPException:
         raise
+    except JobLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
@@ -106,14 +142,15 @@ async def analyze_repository(
         except TimeoutError as exc:
             raise HTTPException(status_code=429, detail="Scanner is busy; retry later") from exc
         try:
-            return await pipeline.run_repository_pipeline(
-                repo_url=str(request.repo_url), github_token=request.github_token,
-                db=db, user_id=user.id,
+            return await job_manager.run_sync(
+                db, user.id, str(request.repo_url), '(repository)', request.github_token,
             )
         finally:
             _scan_slots.release()
     except HTTPException:
         raise
+    except JobLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
@@ -150,6 +187,9 @@ async def get_all_results(
             "findings": evidence.get("findings", []),
             "commit_sha": evidence.get("commit_sha"),
             "rules_sha256": evidence.get("rules_sha256"),
+            "imported": evidence.get("imported", False),
+            "source_tools": evidence.get("source_tools", ["Semgrep"]),
+            "artifact_sha256": evidence.get("artifact_sha256"),
             "file_count": evidence.get("file_count", 1),
             "cvss_score": None,
             "severity": "UNVERIFIED" if scan and scan.finding_count else "UNKNOWN",
@@ -187,6 +227,9 @@ async def get_analysis_results(
                     for review in reviews],
         "commit_sha": evidence.get("commit_sha"),
         "rules_sha256": evidence.get("rules_sha256"),
+        "imported": evidence.get("imported", False),
+        "source_tools": evidence.get("source_tools", ["Semgrep"]),
+        "artifact_sha256": evidence.get("artifact_sha256"),
         "file_count": evidence.get("file_count", 1),
         "cvss_score": None,
         "report_url": f"/api/analysis/reports/{analysis_id}/html",
@@ -278,6 +321,8 @@ async def compare_analysis_results(
         raise HTTPException(status_code=404, detail="Scan evidence not found")
     try:
         changes = compare_findings(evidence[analysis_id], evidence[baseline_id])
+    except JobLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
@@ -295,7 +340,16 @@ async def get_report(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await _owned_analysis(db, user, analysis_id)
+    analysis = await _owned_analysis(db, user, analysis_id)
+    if format == 'json':
+        scan = (await db.execute(select(ScanResult).where(ScanResult.analysis_result_id == analysis_id))).scalar_one_or_none()
+        if scan is None:
+            raise HTTPException(status_code=404, detail='Scan evidence not found')
+        bug = await db.get(BugReport, analysis.bug_report_id)
+        reviews = (await db.execute(select(FindingReview).where(FindingReview.analysis_result_id == analysis_id,
+            FindingReview.user_id == user.id))).scalars().all()
+        return JSONResponse(build_security_event(analysis_id, bug.repository_url, json.loads(scan.scan_output), reviews),
+            headers={'Content-Disposition': f'attachment; filename="zorix_{analysis_id}.json"'})
     if format == "sarif":
         scan = (await db.execute(select(ScanResult).where(
             ScanResult.analysis_result_id == analysis_id
@@ -311,11 +365,11 @@ async def get_report(
             headers={"Content-Disposition": f'attachment; filename="zorix_{analysis_id}.sarif"'},
         )
     if format != "html":
-        raise HTTPException(status_code=404, detail="Available formats: html, sarif")
+        raise HTTPException(status_code=404, detail="Available formats: html, sarif, json")
     report = (await db.execute(select(Report).where(
         Report.analysis_result_id == analysis_id, Report.report_format == "html"
     ))).scalar_one_or_none()
-    if report is None:
+    if report is None or not Path(report.file_path).is_file():
         raise HTTPException(status_code=404, detail="Report not found")
     return FileResponse(report.file_path, media_type="text/html",
                         filename=f"zorix_{analysis_id}.html")

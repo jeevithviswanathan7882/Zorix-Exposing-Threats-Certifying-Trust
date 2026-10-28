@@ -90,7 +90,7 @@ try {
   await page.screenshot({ path: path.join(outputDir, '04-scan-comparison.png') })
 
   await page.getByLabel('Scan scope').selectOption('file')
-  await page.locator('.scan-form').scrollIntoViewIfNeeded()
+  await page.locator('#new-scan .scan-form').scrollIntoViewIfNeeded()
   await page.screenshot({ path: path.join(outputDir, '05-file-scan-form.png') })
   await page.getByRole('button', { name: /completed · 12 file\(s\) · 1 potential finding\(s\)/ }).click()
   await page.locator('.details').scrollIntoViewIfNeeded()

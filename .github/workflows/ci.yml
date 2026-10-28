@@ -88,6 +88,29 @@ jobs:
           docker compose up -d --wait postgres
           docker compose run --rm --no-deps --entrypoint alembic backend -c backend/alembic.ini upgrade head
           docker compose run --rm --no-deps --entrypoint alembic backend -c backend/alembic.ini check
+      - name: Verify production secrets, HTTPS, and evidence workflow
+        run: |
+          export ZORIX_DOMAIN=localhost
+          export ZORIX_SECRETS_DIR="$RUNNER_TEMP/zorix-prod-secrets"
+          python3 - <<'PY'
+          import os, secrets
+          from pathlib import Path
+          folder = Path(os.environ['ZORIX_SECRETS_DIR'])
+          folder.mkdir(mode=0o700)
+          for name in ('api_key', 'db_password'):
+              path = folder / name
+              path.write_text(secrets.token_urlsafe(48))
+              path.chmod(0o444)
+          PY
+          docker tag zorix-ci-backend zorix-prod-ci-backend
+          docker tag zorix-ci-frontend zorix-prod-ci-frontend
+          docker compose -p zorix-prod-ci -f deploy/compose.yml -f deploy/compose.ci.yml config --quiet
+          docker compose -p zorix-prod-ci -f deploy/compose.yml -f deploy/compose.ci.yml up --no-build -d --wait
+          for attempt in $(seq 1 30); do
+            if docker compose -p zorix-prod-ci -f deploy/compose.yml -f deploy/compose.ci.yml exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > "$RUNNER_TEMP/zorix-root.crt" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          python3 tools/smoke_https.py --ca "$RUNNER_TEMP/zorix-root.crt"
       - name: Generate image SBOMs, report vulnerabilities, and gate fixes
         run: |
           mkdir -p image-reports
@@ -120,6 +143,12 @@ jobs:
       - name: Stop test database
         if: always()
         run: docker compose down
+      - name: Stop production smoke stack
+        if: always()
+        env:
+          ZORIX_DOMAIN: localhost
+          ZORIX_SECRETS_DIR: ${{ runner.temp }}/zorix-prod-secrets
+        run: docker compose -p zorix-prod-ci -f deploy/compose.yml -f deploy/compose.ci.yml down --volumes
 
   configuration:
     runs-on: ubuntu-latest

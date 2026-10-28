@@ -65,3 +65,6 @@ lerna-debug.log*
 # =========================
 
 Thumbs.db
+
+.secrets/
+deploy/secrets/

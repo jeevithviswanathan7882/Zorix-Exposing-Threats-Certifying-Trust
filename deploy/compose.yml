@@ -1,0 +1,81 @@
+# Single API process: the bounded queue is intentionally not a shared broker.
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: zorix
+      POSTGRES_USER: zorix_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [database]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U zorix_user -d zorix']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+      target: production
+    environment:
+      DATABASE_TYPE: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: zorix
+      POSTGRES_USER: zorix_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      SECRET_KEY_FILE: /run/secrets/api_key
+      DEBUG: 'false'
+      ALLOWED_ORIGINS: '["https://${ZORIX_DOMAIN:?Set ZORIX_DOMAIN}"]'
+    secrets: [db_password, api_key]
+    volumes: [reports:/app/reports, logs:/app/logs]
+    networks: [database, application, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    stop_grace_period: 150s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+      target: production
+    networks: [application, edge]
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+  caddy:
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    environment:
+      ZORIX_DOMAIN: ${ZORIX_DOMAIN:?Set ZORIX_DOMAIN}
+    ports: ['80:80', '443:443', '443:443/udp']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+    networks: [edge, public]
+    depends_on: [frontend]
+    restart: unless-stopped
+secrets:
+  db_password:
+    file: ${ZORIX_SECRETS_DIR:?Set ZORIX_SECRETS_DIR}/db_password
+  api_key:
+    file: ${ZORIX_SECRETS_DIR:?Set ZORIX_SECRETS_DIR}/api_key
+volumes:
+  database:
+  reports:
+  logs:
+  certificates:
+  caddy_config:
+networks:
+  database: {internal: true}
+  application: {internal: true}
+  edge: {internal: true}
+  egress: {}
+  public: {}

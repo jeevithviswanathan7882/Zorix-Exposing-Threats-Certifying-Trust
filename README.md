@@ -54,6 +54,14 @@ Compose binds its host ports to `127.0.0.1`. Its default database password and A
 4. **Triage a finding.** Set it to open, investigating, false positive, or accepted risk. The latter two require a written justification. Review status is an analyst decision, not exploit verification.
 5. **Compare and export.** Compare completed scans of the same repository and scope to see static findings that appeared or disappeared. Download an HTML report or SARIF 2.1.0 artifact.
 
+## Import reports from other security tools
+
+Expand **Import a security tool report** in the red workspace. Supply the associated GitHub repository, the reported 40-character commit SHA, and a JSON report. Zorix accepts SARIF 2.1.0 and tool-specific JSON/JSONL adapters for Trivy, Bandit, Gitleaks, Checkov, OWASP ZAP, and Nuclei. See [tool formats and evidence boundaries](docs/TOOLS.md). Tool-specific output varies; reports must satisfy the supported schema. Zorix imports reports rather than executing those additional tools.
+
+The API accepts at most 1 MB per request and 1,000 findings; the UI caps files at 900 KB to leave room for metadata. It stores selected finding fields, package coordinates and fixed versions for Trivy, source-tool names, and a SHA-256 digest of the canonical JSON report. It discards unselected fields such as snippets, response bodies, and Trivy secret matches; selected messages may still contain sensitive text, so review reports before upload. Reports whose SARIF invocation explicitly failed are rejected. Repository and commit associations are supplied by the uploader and are not independently attested.
+
+Imported evidence uses the same owner checks, review history, comparisons, and HTML/SARIF exports as native scans. Package findings retain their advisory IDs and versions without invented source line numbers. Comparisons reject different recorded tool sets. Imports do not establish exploitability or compliance.
+
 ## Screenshots
 
 These 1920 × 1080 wallpaper-size screenshots show the original Zorix red/black visual style on the working React interface, rendered with **illustrative sample scan data**. Generate them again with `npm run screenshots` in `frontend/` while the frontend dev server is running. The script uses system Chromium, or the executable set by `CHROMIUM_PATH`.
@@ -90,9 +98,15 @@ These 1920 × 1080 wallpaper-size screenshots show the original Zorix red/black 
 | CI and container hardening | Browser flow, dependency audits, Trivy configuration and image gates, CycloneDX SBOMs; non-root app containers | [GitHub Actions](https://github.com/rj-karan/Zorix-Exposing-Threats-Certifying-Trust/actions/workflows/ci.yml), downloadable `image-security-evidence` artifacts, and a local Docker smoke test |
 | Database migrations | Alembic initial schema and drift check | `test_database_migrations_create_current_schema` |
 
-The backend tests exercise ownership and report escaping through FastAPI with a real test database. The frontend tests cover sign-in, session expiry, credential cleanup, scan submission, evidence, review controls, and comparison. The current local suite has **18 backend tests and 6 frontend tests**. CI also exercises the React scan, review, and comparison flow in Chromium with deterministic API fixtures.
+The backend tests exercise ownership and report escaping through FastAPI with a real test database. The frontend tests cover sign-in, session expiry, credential cleanup, scan submission, evidence, review controls, and comparison. The current local suite has **35 backend tests and 11 frontend tests**. CI also exercises the React scan, review, and comparison flow in Chromium with deterministic API fixtures.
 
 Review decisions preserve their history: click **View review history** below a finding to see previous statuses and notes. Upgraded databases import the last known decision as an explicitly labeled baseline; they do not invent earlier history.
+
+## Background jobs and quotas
+
+The UI submits scans to `POST /api/jobs` and polls owner-scoped job status. Jobs transition through queued, running, completed, failed, cancelled, or interrupted. You can cancel a queued job. Completed evidence loads automatically; signing out does not discard a submitted job. Tokens are kept only in the process queue and are not persisted with job records. Restarted jobs are marked interrupted and must be submitted again.
+
+Use one API process (the supplied container entrypoint does this). The queue has two workers and twenty waiting entries; synchronous compatibility endpoints share the same two scanner slots. Each account has at most two pending jobs and twenty submissions per rolling day, including failed/cancelled attempts and imported reports. The synchronous endpoints also create quota-accounted job records. Excess submissions return 429. Job status survives restart, but queued work and credentials are deliberately not replayed.
 
 ## How a scan works
 
@@ -142,6 +156,8 @@ The Compose file is a **development setup**. Review these settings before puttin
 
 Compose applies Alembic migrations before starting the API. To run the API outside Docker, run `.venv/bin/alembic -c backend/alembic.ini upgrade head` before Uvicorn. **Back up an existing database before upgrading.** The initial migration can adopt the previous `create_all` schema, adding the finding-review table if needed; it rejects an unexpected or partial schema instead of silently stamping it. Local Compose secrets can be overridden with `ZORIX_DB_PASSWORD`, `ZORIX_SECRET_KEY`, and `ZORIX_DEBUG=false`; the Compose stack still binds only to localhost and is not a public deployment recipe.
 
+See [deployment, backups, retention, and policy/SIEM handoff](deploy/README.md) for the separate HTTPS stack and operator commands.
+
 ## Development and checks
 
 For a local API without Docker, use Python 3.11 from the repository root:
@@ -183,10 +199,10 @@ The screenshot generator needs a local Chromium executable and the running front
 - **Detection scope:** the bundled Semgrep rules cover selected patterns in Python, JavaScript, and TypeScript. They do not cover every weakness or language. Zorix does not run dynamic tests.
 - **Repository size:** scans are bounded to 100 supported files, 200 KB each, and 2 MB total. Truncated Git trees and over-limit repositories fail rather than yield a partial clean result.
 - **External API:** fetching source requires GitHub API access. Private repositories and larger scans may require a token; GitHub rate limits still apply.
-- **Operations:** scans run in the API process with two slots. There is no background queue, per-user quota, or retention policy yet.
+- **Operations:** the bounded queue supports one API process, two workers, and twenty waiting entries. Tokens remain in memory; interrupted jobs require resubmission after restart. A shared broker and multiple API replicas are not supported.
 - **Review history:** each saved decision also creates an owner-scoped audit event. SQLite and PostgreSQL triggers reject updates and deletes to events. Database administrators can still alter schema or disable triggers; external tamper-proof archival is not included.
 - **Dependencies:** Semgrep's isolated environment currently has five documented advisories across two pinned dependencies. See [SECURITY.md](SECURITY.md) for reachability and review dates.
-- **Production:** migrations are available, but there is no public deployment workflow, TLS termination, or managed secret store. The local Compose stack is for development.
+- **Production:** [the HTTPS deployment runbook](deploy/README.md) supplies a separate Compose stack with file-mounted secrets and Caddy TLS. It is tested locally; a public deployment needs your server and domain. It supports one API process.
 
 ## Where things are
 

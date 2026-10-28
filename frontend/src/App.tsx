@@ -1,9 +1,11 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import './Comparison.css'
 import './Review.css'
+import { API, request } from './api'
+import JobQueue from './JobQueue'
 
-type Finding = { rule_id: string; file: string; line: number | null; severity: string; message: string }
+type Finding = { rule_id: string; file: string; line: number | null; severity: string; message: string; package?: { PkgName: string; InstalledVersion: string; FixedVersion: string } }
 type Scan = {
   id: string
   repository: string
@@ -13,35 +15,16 @@ type Scan = {
   findings: Finding[]
   commit_sha: string | null
   rules_sha256?: string | null
+  imported?: boolean
+  source_tools?: string[]
+  artifact_sha256?: string
   file_count: number
   created_at: string
 }
-type ScanResponse = { status: string; error?: string; findings: Finding[]; analysis_id: string }
 type Comparison = { introduced: Finding[]; resolved: Finding[]; introduced_count: number; resolved_count: number; unchanged_count: number; note: string }
 type ReviewStatus = 'open' | 'investigating' | 'false_positive' | 'accepted_risk'
 type Review = { finding_index: number; status: ReviewStatus; note: string }
 type ReviewEvent = { id: string; status: ReviewStatus; note: string; event_type: string; created_at: string }
-
-const API = '/api'
-
-async function request<T>(path: string, token?: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  })
-  const body = await response.json().catch(() => ({}))
-  if (token && response.status === 401) {
-    localStorage.removeItem('zorix_token')
-    window.dispatchEvent(new Event('zorix:session-expired'))
-    throw new Error('Session expired. Sign in again.')
-  }
-  if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`)
-  return body as T
-}
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('zorix_token') || '')
@@ -61,6 +44,11 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [latestJob, setLatestJob] = useState('')
+  const [importReport, setImportReport] = useState('')
+  const [importCommit, setImportCommit] = useState('')
+  const [importFormat, setImportFormat] = useState('sarif')
+  const importReadVersion = useRef(0)
 
   useEffect(() => {
     const expireSession = () => {
@@ -70,6 +58,8 @@ export default function App() {
       setGithubToken('')
       setPassword('')
       setNotice('')
+      setImportReport('')
+      importReadVersion.current += 1
       setError('Session expired. Sign in again.')
     }
     window.addEventListener('zorix:session-expired', expireSession)
@@ -83,6 +73,7 @@ export default function App() {
       setScans(data.results)
       setSelected(current => (preferLatest ? data.results[0] : data.results.find(item => item.id === current?.id) || data.results[0]) || null)
     } catch (err) {
+      if ((err as Error).name === 'AbortError') return
       setError((err as Error).message)
     }
   }, [token])
@@ -123,34 +114,34 @@ export default function App() {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     try {
-      const result = await request<ScanResponse>(scanScope === 'repository' ? '/analysis/repository' : '/analysis/analyze', token, {
-        method: 'POST',
-        body: JSON.stringify(scanScope === 'repository'
-          ? { repo_url: repoUrl, ...(githubToken ? { github_token: githubToken } : {}) }
-          : { repo_url: repoUrl, affected_file: affectedFile,
-              ...(githubToken ? { github_token: githubToken } : {}) }),
+      const result = await request<{ id: string }>('/jobs', token, {
+        method: 'POST', body: JSON.stringify({ repo_url: repoUrl,
+          affected_file: scanScope === 'repository' ? '(repository)' : affectedFile,
+          ...(githubToken ? { github_token: githubToken } : {}),
+        }),
       })
-      await loadScans(true)
-      setNotice(result.status === 'completed'
-        ? `Scan complete: ${result.findings.length} potential finding(s). Review the evidence before reporting.`
-        : `Scan ${result.status}: ${result.error || 'Check scanner configuration.'}`)
+      setLatestJob(result.id)
+      setNotice('Scan queued. Job status updates below; completed evidence will load automatically.')
     } catch (err) { setError((err as Error).message) }
     finally { setGithubToken(''); setBusy(false) }
   }
 
-  const downloadReport = async (id: string, format: 'html' | 'sarif') => {
+  const downloadReport = async (id: string, format: 'html' | 'sarif' | 'json') => {
     setError('')
     try {
       const response = await fetch(`${API}/analysis/reports/${id}/${format}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (localStorage.getItem('zorix_token') !== token) return
       if (response.status === 401) {
         localStorage.removeItem('zorix_token')
         window.dispatchEvent(new Event('zorix:session-expired'))
         throw new Error('Session expired. Sign in again.')
       }
       if (!response.ok) throw new Error(`Report request failed (${response.status})`)
-      const url = URL.createObjectURL(await response.blob())
+      const blob = await response.blob()
+      if (localStorage.getItem('zorix_token') !== token) return
+      const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
       link.download = `zorix-${id}.${format}`
@@ -190,6 +181,26 @@ export default function App() {
     setToken(''); setScans([]); setSelected(null); setError(''); setNotice('')
     setGithubToken(''); setPassword(''); setRepoUrl(''); setAffectedFile('')
     setReviews({}); setComparison(null); setBaselineId('')
+    setImportReport(''); setImportCommit(''); setLatestJob('')
+    importReadVersion.current += 1
+  }
+
+  const importEvidence = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await request('/analysis/import', token, { method: 'POST', body: JSON.stringify({
+        repo_url: repoUrl, commit_sha: importCommit, report_format: importFormat,
+        report: importFormat === 'nuclei' ? { results: importReport.split('\n').filter(line => line.trim()).map(line => JSON.parse(line)) }
+          : importFormat === 'gitleaks' ? { findings: JSON.parse(importReport) }
+          : importFormat === 'checkov' && Array.isArray(JSON.parse(importReport)) ? { reports: JSON.parse(importReport) }
+          : JSON.parse(importReport),
+      }) })
+      setImportReport('')
+      await loadScans(true)
+      setNotice('Tool report imported. Repository and commit association are supplied by the uploader; review the evidence.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
   }
 
   const loadReviewHistory = async (index: number) => {
@@ -242,7 +253,7 @@ export default function App() {
       <main id="overview">
         <div className="intro">
           <div><span className="eyebrow">// REPOSITORY ANALYSIS</span><h1>EXPOSE THREATS. <em>CERTIFY TRUST.</em></h1>
-          <p>Scan a bounded GitHub repository or one source file with Semgrep. Findings are potential issues, not confirmed exploits or CVSS scores.</p></div>
+          <p>Scan GitHub source or import security tool reports. Review source, dependency, infrastructure, secret-detection, and web-testing evidence before reporting risk.</p></div>
           <div className="count"><span>TOTAL SCANS</span><strong>{String(scans.length).padStart(2, '0')}</strong><span>YOUR WORKSPACE</span></div>
         </div>
         {error && <div className="error" role="alert">{error}</div>}
@@ -259,7 +270,29 @@ export default function App() {
             <label>GitHub token (optional)<input type="password" autoComplete="off" value={githubToken} onChange={e => setGithubToken(e.target.value)} /></label>
             <button disabled={busy}>{busy ? 'Scanning…' : 'Run static scan'}</button>
           </form>
+          <JobQueue token={token} latestJob={latestJob} onFinished={() => void loadScans(true)} onError={setError} />
         </section>
+        <details className="panel import-panel">
+          <summary>Import a security tool report</summary>
+          <p className="muted">SARIF, Trivy, Bandit, Gitleaks, Checkov, ZAP, or Nuclei · maximum 1 MB · imported evidence requires review</p>
+          <form className="scan-form" onSubmit={importEvidence}>
+            <label>Import repository URL<input type="url" required value={repoUrl} onChange={e => setRepoUrl(e.target.value)} /></label>
+            <label>Reported commit SHA<input required pattern="[a-fA-F0-9]{40}" value={importCommit} onChange={e => setImportCommit(e.target.value)} /></label>
+            <label>Report format<select value={importFormat} onChange={e => setImportFormat(e.target.value)}><option value="sarif">SARIF 2.1.0</option><option value="trivy">Trivy JSON</option><option value="bandit">Bandit JSON</option><option value="gitleaks">Gitleaks JSON</option><option value="checkov">Checkov JSON</option><option value="zap">OWASP ZAP JSON</option><option value="nuclei">Nuclei JSONL</option></select></label>
+            <label>Report JSON file<input type="file" accept=".json,.jsonl,.sarif,application/json" onChange={async e => {
+              const file = e.target.files?.[0]
+              const version = ++importReadVersion.current
+              setImportReport('')
+              if (!file) return
+              if (file.size > 900000) { setError('Choose a report below 900 KB to leave room for request metadata.'); return }
+              try {
+                const content = await file.text()
+                if (version === importReadVersion.current && localStorage.getItem('zorix_token') === token) setImportReport(content)
+              } catch { setError('Could not read the report file.') }
+            }} /></label>
+            <button disabled={busy || !importReport}>Import report</button>
+          </form>
+        </details>
         <div className="columns">
           <section className="panel runs" id="scan-history"><h2>Scan history</h2>
             {scans.length === 0 ? <p className="muted">No scans yet.</p> : scans.map(scan => (
@@ -274,8 +307,11 @@ export default function App() {
               <p className="muted">Scan ID: {selected.id}</p>
               {selected.commit_sha && <p className="muted">Commit: <code>{selected.commit_sha}</code></p>}
               {selected.rules_sha256 && <p className="muted">Rules SHA-256: <code>{selected.rules_sha256}</code></p>}
+              {selected.imported && <p className="muted">Imported evidence · {selected.source_tools?.join(', ')} · Commit supplied by uploader</p>}
+              {selected.artifact_sha256 && <p className="muted">Artifact SHA-256: <code>{selected.artifact_sha256}</code></p>}
               <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
               <button className="secondary" onClick={() => void downloadReport(selected.id, 'html')}>Download HTML report</button>
+              <button className="secondary" onClick={() => void downloadReport(selected.id, 'json')}>Download security JSON</button>
               {selected.status === 'completed' && <button className="secondary" onClick={() => void downloadReport(selected.id, 'sarif')}>Download SARIF</button>}
               {selected.status === 'completed' && scans.some(scan => scan.id !== selected.id && scan.repository === selected.repository && scan.affected_file === selected.affected_file && scan.status === 'completed') && <div className="comparison-controls">
                 <label>Compare with a scan of this repository<select value={baselineId} onChange={e => { setBaselineId(e.target.value); setComparison(null) }}>
@@ -294,7 +330,8 @@ export default function App() {
               {selected.findings.length === 0 ? <p className="muted">No findings recorded. This does not prove the file is secure.</p> :
                 selected.findings.map((finding, index) => <article className="finding" key={`${finding.rule_id}-${index}`}>
                   <div><span className="tag">{finding.severity}</span><strong>{finding.rule_id}</strong></div>
-                  <small>{finding.file}:{finding.line || '?'}</small><p>{finding.message}</p>
+                  <small>{finding.file}{finding.line ? `:${finding.line}` : ''}</small><p>{finding.message}</p>
+                  {finding.package && <p>Package: {finding.package.PkgName} · Installed: {finding.package.InstalledVersion} · Fixed: {finding.package.FixedVersion || 'Not provided'}</p>}
                   <div className="review-controls">
                     <label>Review status<select value={reviews[index]?.status || 'open'} onChange={event =>
                       setReviews(current => ({ ...current, [index]: {
@@ -325,7 +362,7 @@ export default function App() {
           </section>
         </div>
       </main>
-      <footer>Static analysis only · Assess repositories you are authorized to review · Manual verification required</footer>
+      <footer>Authorized assets only · Imported reports are unverified · Manual verification required</footer>
       </div>
     </div>
   )

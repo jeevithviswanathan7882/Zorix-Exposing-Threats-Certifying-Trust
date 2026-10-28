@@ -60,7 +60,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Semgrep: {'available' if shutil.which(settings.SEMGREP_PATH) else 'unavailable'}")
     logger.info("=" * 60)
 
-    yield
+    from backend.services.scan_jobs import manager
+    await manager.start()
+    try:
+        yield
+    finally:
+        await manager.stop()
 
     logger.info("Zorix shutting down")
 
@@ -82,10 +87,11 @@ app.add_middleware(
 )
 
 # ---- API Routes ----
-from backend.api.routes import analysis, auth
+from backend.api.routes import analysis, auth, jobs
 
 app.include_router(analysis.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(jobs.router, prefix="/api")
 # Legacy admin, settings, logs, and WebSocket routes are excluded until they
 # have current ownership and authorization tests.
 

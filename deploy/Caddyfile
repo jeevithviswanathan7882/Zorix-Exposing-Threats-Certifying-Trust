@@ -1,0 +1,9 @@
+{$ZORIX_DOMAIN} {
+    header Strict-Transport-Security "max-age=31536000"
+    encode zstd gzip
+    reverse_proxy frontend:8080 {
+        transport http {
+            response_header_timeout 240s
+        }
+    }
+}

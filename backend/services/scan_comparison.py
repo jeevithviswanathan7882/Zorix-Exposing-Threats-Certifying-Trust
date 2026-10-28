@@ -7,6 +7,8 @@ from collections import Counter
 def compare_findings(current: dict, baseline: dict) -> dict:
     if current.get("status") != "completed" or baseline.get("status") != "completed":
         raise ValueError("Both scans must have completed successfully")
+    if current.get("source_tools") and baseline.get("source_tools") and current["source_tools"] != baseline["source_tools"]:
+        raise ValueError("Scans used different tools; compare reports from the same tools")
     current_rules, baseline_rules = current.get("rules_sha256"), baseline.get("rules_sha256")
     if current_rules and baseline_rules and current_rules != baseline_rules:
         raise ValueError("Scans used different rule sets; rescan with the same rules before comparing")

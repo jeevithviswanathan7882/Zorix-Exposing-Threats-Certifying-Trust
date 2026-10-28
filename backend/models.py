@@ -80,6 +80,20 @@ class FindingReview(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class ScanJob(Base):
+    """Durable job status; per-scan credentials are never stored here."""
+    __tablename__ = 'scan_jobs'
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID(), ForeignKey('users.id'), nullable=False, index=True)
+    repository = Column(String(1024), nullable=False)
+    affected_file = Column(String(1024), nullable=False)
+    state = Column(String(32), nullable=False, default='queued')
+    analysis_id = Column(GUID(), ForeignKey('analysis_results.id'), nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class FindingReviewEvent(Base):
     """Append-only review snapshots; editing the current review preserves history."""
 
