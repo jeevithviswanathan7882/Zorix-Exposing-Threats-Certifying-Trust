@@ -110,6 +110,8 @@ GitHub fetching has a 60-second overall deadline. Semgrep has a separate 90-seco
 
 Semgrep results retain the rule ID, file, line, severity, and message. A match is not proof of reachability or exploitability. A scan with zero matches does not prove the code is secure. Read [project scope and portfolio evidence](docs/PROJECT_SCOPE.md) for a role-by-role view of what this project demonstrates.
 
+New completed scans also record the SHA-256 fingerprint of the exact rule file copied into the scan workspace. The fingerprint appears in the evidence view, HTML report, and SARIF properties. Comparisons reject scans with different recorded rule fingerprints. Older scans remain readable; comparisons involving missing fingerprints explicitly say that rule consistency could not be checked. Rule IDs remain stable across temporary workspace paths.
+
 ## Security, briefly
 
 - GitHub URLs and paths are checked before fetching. Repository scans fetch specific blob SHAs rather than following a moving branch during the scan.

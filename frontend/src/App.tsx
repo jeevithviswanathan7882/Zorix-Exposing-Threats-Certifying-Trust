@@ -12,6 +12,7 @@ type Scan = {
   finding_count: number
   findings: Finding[]
   commit_sha: string | null
+  rules_sha256?: string | null
   file_count: number
   created_at: string
 }
@@ -258,6 +259,7 @@ export default function App() {
             {selected ? <>
               <p className="muted">Scan ID: {selected.id}</p>
               {selected.commit_sha && <p className="muted">Commit: <code>{selected.commit_sha}</code></p>}
+              {selected.rules_sha256 && <p className="muted">Rules SHA-256: <code>{selected.rules_sha256}</code></p>}
               <div className="summary"><span>Status: <strong>{selected.status}</strong></span><span>Findings: <strong>{selected.finding_count}</strong></span><span>Validation: <strong>Not performed</strong></span></div>
               <button className="secondary" onClick={() => void downloadReport(selected.id, 'html')}>Download HTML report</button>
               {selected.status === 'completed' && <button className="secondary" onClick={() => void downloadReport(selected.id, 'sarif')}>Download SARIF</button>}

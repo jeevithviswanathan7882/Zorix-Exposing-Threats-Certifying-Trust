@@ -6,6 +6,7 @@ exploitable vulnerability without a separate validation step.
 
 import asyncio
 import base64
+import hashlib
 import html
 import json
 import logging
@@ -111,12 +112,16 @@ async def fetch_source(owner: str, repo: str, path: str, token: str | None = Non
 def run_semgrep(source: str, filename: str) -> dict:
     """Run local Semgrep rules and return only evidence the tool emitted."""
     with tempfile.TemporaryDirectory(prefix="zorix-scan-") as tmp:
+        rules_bytes = RULES_PATH.read_bytes()
+        rules_snapshot = Path(tmp) / "rules.yaml"
+        rules_snapshot.write_bytes(rules_bytes)
+        rules_sha256 = hashlib.sha256(rules_bytes).hexdigest()
         target = Path(tmp) / Path(filename).name
         target.write_text(source, encoding="utf-8")
         try:
             process = subprocess.run(
-                [settings.SEMGREP_PATH, "scan", "--config", str(RULES_PATH),
-                 "--json", "--metrics=off", "--disable-version-check", "--quiet", str(target)],
+                [settings.SEMGREP_PATH, "scan", "--config", str(rules_snapshot),
+                 "--json", "--no-rewrite-rule-ids", "--metrics=off", "--disable-version-check", "--quiet", str(target)],
                 capture_output=True, text=True, timeout=90, check=False,
             )
         except FileNotFoundError:
@@ -139,7 +144,7 @@ def run_semgrep(source: str, filename: str) -> dict:
                 "severity": extra.get("severity", "INFO"),
                 "message": extra.get("message", ""),
             })
-        return {"status": "completed", "findings": findings}
+        return {"status": "completed", "findings": findings, "rules_sha256": rules_sha256}
 
 
 class VulnerabilityPipeline:
@@ -217,7 +222,8 @@ class VulnerabilityPipeline:
         db.add(result)
         await db.flush()
         evidence = {"status": scan["status"], **metadata,
-                    "findings": findings, "error": scan.get("error")}
+                    "findings": findings, "error": scan.get("error"),
+                    "rules_sha256": scan.get("rules_sha256")}
         db.add(ScanResult(
             analysis_result_id=result.id, scan_type="static", scanner_name="semgrep",
             finding_count=len(findings),
@@ -240,6 +246,7 @@ class VulnerabilityPipeline:
             f"<p>Repository: {html.escape(canonical_url)}<br>Scope: {html.escape(path)}"
             f"<br>Commit SHA: {html.escape(metadata.get('commit_sha', 'not pinned for single-file scan'))}"
             f"<br>GitHub blob SHA: {html.escape(metadata.get('blob_sha', 'see stored scan evidence'))}"
+            f"<br>Rules SHA-256: {html.escape(scan.get('rules_sha256') or 'not recorded')}"
             f"<br>Files scanned: {metadata['file_count']}<br>Scanner: {html.escape(scan['status'])}</p>"
             "<table border='1'><tr><th>Rule</th><th>Location</th><th>Severity</th><th>Message</th></tr>"
             f"{rows}</table>", encoding="utf-8",
@@ -257,4 +264,5 @@ class VulnerabilityPipeline:
             "vulnerable": None, "exploits_tested": 0, "vulnerabilities_confirmed": 0,
             "confidence_score": None, "findings": findings, "error": scan.get("error"),
             "commit_sha": metadata.get("commit_sha"), "file_count": metadata["file_count"],
+            "rules_sha256": scan.get("rules_sha256"),
         }

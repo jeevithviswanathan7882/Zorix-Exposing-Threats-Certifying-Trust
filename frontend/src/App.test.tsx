@@ -53,7 +53,7 @@ describe('Zorix frontend', () => {
         : url.endsWith('/analysis/results/scan-1') ? { reviews: [] } : { results: [{
         id: 'scan-1', repository: 'https://github.com/example/project',
         affected_file: 'app.py', status: 'completed', finding_count: 1,
-        commit_sha: null, file_count: 1,
+        commit_sha: null, rules_sha256: 'c'.repeat(64), file_count: 1,
         created_at: '2026-01-01T00:00:00',
         findings: [{ rule_id: 'os-system-call', file: 'app.py', line: 2,
           severity: 'ERROR', message: 'Potential command injection' }],
@@ -68,6 +68,7 @@ describe('Zorix frontend', () => {
     expect(navigation.querySelector('a[href="#evidence"]')).toBeTruthy()
     expect(screen.getByText('Not performed')).toBeTruthy()
     expect(screen.getByText('os-system-call')).toBeTruthy()
+    expect(screen.getByText('c'.repeat(64))).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Download SARIF' })).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Review status'), { target: { value: 'false_positive' } })
     fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Safe input' } })

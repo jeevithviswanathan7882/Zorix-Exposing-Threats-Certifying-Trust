@@ -1,6 +1,7 @@
 """Bounded, commit-pinned GitHub repository snapshots and Semgrep scans."""
 
 import base64
+import hashlib
 import json
 import re
 import subprocess
@@ -106,7 +107,12 @@ async def fetch_repository_snapshot(owner: str, repo: str, token: str | None = N
 def scan_files(files: dict[str, str]) -> dict:
     """Run one local Semgrep process over a bounded source snapshot."""
     with tempfile.TemporaryDirectory(prefix="zorix-repo-") as tmp:
-        root = Path(tmp)
+        rules_bytes = RULES_PATH.read_bytes()
+        rules_snapshot = Path(tmp) / "rules.yaml"
+        rules_snapshot.write_bytes(rules_bytes)
+        rules_sha256 = hashlib.sha256(rules_bytes).hexdigest()
+        root = Path(tmp) / "source"
+        root.mkdir()
         for name, source in files.items():
             if not _safe_source_path(name):
                 raise ValueError("Unsafe repository source path")
@@ -115,8 +121,8 @@ def scan_files(files: dict[str, str]) -> dict:
             target.write_text(source, encoding="utf-8")
         try:
             process = subprocess.run(
-                [get_settings().SEMGREP_PATH, "scan", "--config", str(RULES_PATH), "--json",
-                 "--metrics=off", "--disable-version-check", "--quiet", str(root)],
+                [get_settings().SEMGREP_PATH, "scan", "--config", str(rules_snapshot), "--json",
+                 "--no-rewrite-rule-ids", "--metrics=off", "--disable-version-check", "--quiet", str(root)],
                 capture_output=True, text=True, timeout=120, check=False,
             )
         except FileNotFoundError:
@@ -143,4 +149,4 @@ def scan_files(files: dict[str, str]) -> dict:
                              "line": item.get("start", {}).get("line"),
                              "severity": extra.get("severity", "INFO"),
                              "message": extra.get("message", "")})
-        return {"status": "completed", "findings": findings}
+        return {"status": "completed", "findings": findings, "rules_sha256": rules_sha256}

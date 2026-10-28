@@ -33,6 +33,7 @@ def build_sarif(evidence: dict) -> dict:
             "tool": {"driver": {"name": "Zorix Semgrep", "rules": rules}},
             "originalUriBaseIds": {"%SRCROOT%": {"uri": "file:///repo/"}},
             "results": results,
-            "properties": {"commit_sha": evidence.get("commit_sha")},
+            "properties": {"commit_sha": evidence.get("commit_sha"),
+                           "rules_sha256": evidence.get("rules_sha256")},
         }],
     }

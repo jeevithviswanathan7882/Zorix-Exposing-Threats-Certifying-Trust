@@ -149,6 +149,7 @@ async def get_all_results(
             "finding_count": scan.finding_count if scan else 0,
             "findings": evidence.get("findings", []),
             "commit_sha": evidence.get("commit_sha"),
+            "rules_sha256": evidence.get("rules_sha256"),
             "file_count": evidence.get("file_count", 1),
             "cvss_score": None,
             "severity": "UNVERIFIED" if scan and scan.finding_count else "UNKNOWN",
@@ -185,6 +186,7 @@ async def get_analysis_results(
                      "note": review.note, "updated_at": review.updated_at.isoformat()}
                     for review in reviews],
         "commit_sha": evidence.get("commit_sha"),
+        "rules_sha256": evidence.get("rules_sha256"),
         "file_count": evidence.get("file_count", 1),
         "cvss_score": None,
         "report_url": f"/api/analysis/reports/{analysis_id}/html",

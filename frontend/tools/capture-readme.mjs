@@ -1,6 +1,7 @@
 import { chromium } from 'playwright-core'
 import { mkdir, readFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -9,6 +10,9 @@ const outputDir = fileURLToPath(new URL('../../docs/screenshots/', import.meta.u
 await mkdir(outputDir, { recursive: true })
 
 const repository = 'https://github.com/example/security-demo'
+const rulesSha256 = createHash('sha256').update(
+  await readFile(new URL('../../security/semgrep_rules.yaml', import.meta.url)),
+).digest('hex')
 const currentFindings = [
   { rule_id: 'os-system-call', file: 'src/worker.py', line: 42, severity: 'ERROR',
     message: 'Potential command injection via os.system()' },
@@ -18,11 +22,11 @@ const currentFindings = [
 const scans = [
   { id: '11111111-1111-4111-8111-111111111111', repository,
     affected_file: '(repository)', status: 'completed', finding_count: 2,
-    findings: currentFindings, commit_sha: 'a'.repeat(40), file_count: 12,
+    findings: currentFindings, commit_sha: 'a'.repeat(40), rules_sha256: rulesSha256, file_count: 12,
     created_at: '2026-10-27T12:00:00' },
   { id: '22222222-2222-4222-8222-222222222222', repository,
     affected_file: '(repository)', status: 'completed', finding_count: 1,
-    findings: [currentFindings[0]], commit_sha: 'b'.repeat(40), file_count: 12,
+    findings: [currentFindings[0]], commit_sha: 'b'.repeat(40), rules_sha256: rulesSha256, file_count: 12,
     created_at: '2026-10-26T12:00:00' },
 ]
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -130,6 +131,8 @@ def test_semgrep_reports_real_rule_and_clean_file(monkeypatch):
     assert flagged["status"] == clean["status"] == "completed"
     assert any(item["rule_id"].endswith("os-system-call") for item in flagged["findings"])
     assert clean["findings"] == []
+    assert flagged["rules_sha256"] == clean["rules_sha256"] == hashlib.sha256(pipeline_module.RULES_PATH.read_bytes()).hexdigest()
+    assert any(item["rule_id"] == "os-system-call" for item in flagged["findings"])
 
 
 def test_single_file_fetch_uses_pinned_commit(monkeypatch):
@@ -231,6 +234,7 @@ def test_repository_semgrep_preserves_relative_paths(monkeypatch):
         pytest.skip("Local Semgrep executable is unavailable")
     result = repository_scanner.scan_files({"src/app.py": "import os\nos.system(user_input)\n"})
     assert result["status"] == "completed"
+    assert result["rules_sha256"] == hashlib.sha256(pipeline_module.RULES_PATH.read_bytes()).hexdigest()
     assert any(item["file"] == "src/app.py" for item in result["findings"])
 
 
@@ -252,6 +256,12 @@ def test_scan_comparison_tracks_duplicate_findings_and_failed_scans():
     assert changes["introduced_count"] == 1
     assert changes["resolved_count"] == 0
     assert changes["unchanged_count"] == 1
+    assert "could not be checked" in changes["note"]
+    with pytest.raises(ValueError, match="different rule sets"):
+        compare_findings(
+            {"status": "completed", "findings": [finding], "rules_sha256": "a" * 64},
+            {"status": "completed", "findings": [finding], "rules_sha256": "b" * 64},
+        )
     with pytest.raises(ValueError, match="completed"):
         compare_findings({"status": "error", "findings": []}, {"status": "completed", "findings": []})
 
@@ -272,7 +282,7 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
 
         monkeypatch.setattr(pipeline_module, "fetch_source", fake_fetch)
         monkeypatch.setattr(pipeline_module, "run_semgrep", lambda source, filename: {
-            "status": "completed",
+            "status": "completed", "rules_sha256": "c" * 64,
             "findings": [{"rule_id": "os-system-call", "file": filename, "line": 2,
                           "severity": "ERROR", "message": "Potential <script>alert(1)</script>"}],
         })
@@ -315,6 +325,7 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert body["score"] is None
                 assert body["findings"][0]["rule_id"] == "os-system-call"
                 assert body["commit_sha"] == "a" * 40
+                assert body["rules_sha256"] == "c" * 64
                 scan_id = body["analysis_id"]
                 repository_scan = await client.post("/api/analysis/repository", json={
                     "repo_url": "https://github.com/example/project"}, headers=alice)
@@ -362,11 +373,13 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 report = await client.get(f"/api/analysis/reports/{scan_id}/html", headers=alice)
                 assert report.status_code == 200
                 assert b"Manual review" in report.content or b"manual review" in report.content
+                assert ("c" * 64).encode() in report.content
                 assert b"&lt;script&gt;" in report.content
                 assert b"<script>" not in report.content
                 sarif = await client.get(f"/api/analysis/reports/{scan_id}/sarif", headers=alice)
                 assert sarif.status_code == 200
                 assert sarif.json()["version"] == "2.1.0"
+                assert sarif.json()["runs"][0]["properties"]["rules_sha256"] == "c" * 64
                 sarif_result = sarif.json()["runs"][0]["results"][0]
                 assert sarif_result["ruleId"] == "os-system-call"
                 assert sarif_result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "app.py"
