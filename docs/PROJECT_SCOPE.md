@@ -31,7 +31,7 @@ Both scan modes resolve the default branch to a commit SHA. Repository scans get
 | Container security | Non-root images, loopback-bound ports, SBOMs, full image vulnerability reports, gate on fixable high/critical image findings | Unfixed upstream findings remain; no Kubernetes deployment |
 | Security operations | Owner-scoped scan history and reports | No SIEM integration, alerting, or incident workflow |
 | Penetration testing | Safe target validation and documented verification boundaries | No exploit execution or DAST |
-| GRC and audit | Commit and blob identifiers, stored scan evidence, review notes, schema migrations | No compliance mapping or immutable audit log |
+| GRC and audit | Commit and blob identifiers, stored scan evidence, append-only review events protected by database triggers, schema migrations | No compliance mapping or external tamper-proof archival |
 
 ## Reproduce the evidence
 
@@ -40,7 +40,7 @@ Run `python -m pytest -q tests`, `npm test`, and `npm run build` using the setup
 ## Remaining engineering work
 
 1. Add dependency and container vulnerability findings to the application evidence model, with package coordinates, advisory IDs, and fixed versions.
-2. Add immutable review history and operational retention controls.
+2. Add operational retention controls and external audit archival.
 3. Add a bounded background job queue for repository scans and a deployment guide with secret management.
 4. Add opt-in dynamic testing for explicitly allowlisted local or staging targets, with proof of authorization and isolation.
 5. Add application-level policy gates and SIEM export once their output is tested and documented.

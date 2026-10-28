@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_current_user
 from backend.database import get_db
-from backend.models import AnalysisResult, BugReport, FindingReview, Project, Report, ScanResult, User
+from backend.models import AnalysisResult, BugReport, FindingReview, FindingReviewEvent, Project, Report, ScanResult, User
 from backend.services.pipeline_orchestrator import VulnerabilityPipeline
 from backend.services.sarif_export import build_sarif
 from backend.services.scan_comparison import compare_findings
@@ -231,9 +231,29 @@ async def review_finding(
         review.status = request.status
         review.note = note
         review.updated_at = datetime.utcnow()
+    db.add(FindingReviewEvent(
+        analysis_result_id=analysis_id, user_id=user.id, finding_index=finding_index,
+        status=request.status, note=note,
+    ))
     await db.commit()
     return {"finding_index": finding_index, "status": review.status,
             "note": review.note, "updated_at": review.updated_at.isoformat()}
+
+
+@router.get("/results/{analysis_id}/findings/{finding_index}/history")
+async def finding_review_history(
+    analysis_id: UUID, finding_index: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    await _owned_analysis(db, user, analysis_id)
+    events = (await db.execute(select(FindingReviewEvent).where(
+        FindingReviewEvent.analysis_result_id == analysis_id,
+        FindingReviewEvent.finding_index == finding_index,
+        FindingReviewEvent.user_id == user.id,
+    ).order_by(FindingReviewEvent.created_at, FindingReviewEvent.id))).scalars().all()
+    return {"events": [{"id": str(event.id), "status": event.status, "note": event.note,
+                        "event_type": event.event_type, "created_at": event.created_at.isoformat()}
+                       for event in events]}
 
 
 @router.get("/results/{analysis_id}/compare/{baseline_id}")

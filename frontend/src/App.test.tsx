@@ -48,7 +48,9 @@ describe('Zorix frontend', () => {
     localStorage.setItem('zorix_email', 'analyst@example.com')
     const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => ({
       ok: true,
-      json: async () => url.includes('/findings/0/review')
+      json: async () => url.endsWith('/findings/0/history')
+        ? { events: [{ id: 'event-1', status: 'open', note: 'Initial review', event_type: 'review_saved', created_at: '2026-10-28T12:00:00' }] }
+        : url.includes('/findings/0/review')
         ? { finding_index: 0, status: 'false_positive', note: 'Safe input' }
         : url.endsWith('/analysis/results/scan-1') ? { reviews: [] } : { results: [{
         id: 'scan-1', repository: 'https://github.com/example/project',
@@ -70,6 +72,8 @@ describe('Zorix frontend', () => {
     expect(screen.getByText('os-system-call')).toBeTruthy()
     expect(screen.getByText('c'.repeat(64))).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Download SARIF' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'View review history' }))
+    await waitFor(() => expect(screen.getByText('Initial review')).toBeTruthy())
     fireEvent.change(screen.getByLabelText('Review status'), { target: { value: 'false_positive' } })
     fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Safe input' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save review' }))

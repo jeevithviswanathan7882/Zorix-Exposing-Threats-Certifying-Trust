@@ -55,6 +55,12 @@ def test_database_migrations_create_current_schema(tmp_path):
         result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr or result.stdout
 
+    with sqlite3.connect(tmp_path / 'migrated.db') as connection:
+        connection.execute("INSERT INTO finding_review_events VALUES ('event', 'scan', 'user', 0, 'open', 'Original', 'review_saved', '2026-10-28')")
+        for statement in ("UPDATE finding_review_events SET note='Changed'", "DELETE FROM finding_review_events"):
+            with pytest.raises(sqlite3.IntegrityError, match='append-only'):
+                connection.execute(statement)
+
     # A database initialized by the previous create_all flow is adopted only
     # when it already has the exact current table and column set.
     legacy_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
@@ -65,6 +71,7 @@ def test_database_migrations_create_current_schema(tmp_path):
         await engine.dispose()
     asyncio.run(create_legacy_schema())
     with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DROP TABLE finding_review_events')
         connection.execute('DROP TABLE finding_reviews')
     env["ALEMBIC_DATABASE_URL"] = legacy_url
     for command in ("upgrade", "check"):
@@ -75,6 +82,7 @@ def test_database_migrations_create_current_schema(tmp_path):
         assert result.returncode == 0, result.stderr or result.stdout
 
     with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DROP TABLE finding_review_events')
         connection.execute('DELETE FROM alembic_version')
         connection.execute('ALTER TABLE users ADD COLUMN unexpected TEXT')
     result = subprocess.run(
@@ -349,6 +357,12 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
                 assert reviewed.status_code == 200, reviewed.text
                 detail = await client.get(f"/api/analysis/results/{scan_id}", headers=alice)
                 assert detail.json()["reviews"][0]["status"] == "false_positive"
+                history_path = f"/api/analysis/results/{scan_id}/findings/0/history"
+                assert (await client.get(history_path, headers=bob)).status_code == 404
+                await client.put(review_path, headers=alice, json={"status": "investigating", "note": "Reopened"})
+                history = (await client.get(history_path, headers=alice)).json()["events"]
+                assert [event["status"] for event in history] == ["false_positive", "investigating"]
+                assert history[0]["note"] == "Reviewed the source and confirmed safe input"
                 assert detail.json()["verification_status"] == "unverified"
                 repository_scan_id = repository_scan.json()["analysis_id"]
                 assert (await client.get(

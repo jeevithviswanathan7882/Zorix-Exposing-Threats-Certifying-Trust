@@ -58,6 +58,10 @@ try {
       response = { introduced: [currentFindings[1]], resolved: [], introduced_count: 1,
         resolved_count: 0, unchanged_count: 1,
         note: 'Changes in static findings require manual review; they do not prove a vulnerability was fixed or introduced.' }
+    } else if (pathname.endsWith('/history')) {
+      response = { events: [{ id: 'sample-review-event', status: 'investigating',
+        note: 'Tracing user input to the command boundary.', event_type: 'review_saved',
+        created_at: '2026-10-27T12:00:00' }] }
     } else if (pathname.includes('/findings/') && pathname.endsWith('/review')) {
       response = { finding_index: 0, status: 'investigating', note: 'Tracing user input to the command boundary.' }
     } else if (pathname.startsWith('/api/analysis/results/')) {
@@ -75,6 +79,8 @@ try {
   await page.screenshot({ path: path.join(outputDir, '02-scan-overview.png') })
   await page.getByLabel('Review status').first().selectOption('investigating')
   await page.getByLabel('Review note').first().fill('Tracing user input to the command boundary.')
+  await page.getByRole('button', { name: 'View review history' }).first().click()
+  await page.getByRole('list', { name: 'Review history for finding 1' }).waitFor()
   await page.locator('.details').scrollIntoViewIfNeeded()
   await page.screenshot({ path: path.join(outputDir, '03-finding-review.png') })
 

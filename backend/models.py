@@ -80,6 +80,20 @@ class FindingReview(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class FindingReviewEvent(Base):
+    """Append-only review snapshots; editing the current review preserves history."""
+
+    __tablename__ = "finding_review_events"
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_result_id = Column(GUID(), ForeignKey("analysis_results.id"), nullable=False, index=True)
+    user_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
+    finding_index = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False)
+    note = Column(Text, nullable=False)
+    event_type = Column(String(32), nullable=False, default="review_saved")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class BugReport(Base):
     """Bug report model."""
 

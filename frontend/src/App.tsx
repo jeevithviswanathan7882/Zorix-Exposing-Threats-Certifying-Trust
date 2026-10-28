@@ -20,6 +20,7 @@ type ScanResponse = { status: string; error?: string; findings: Finding[]; analy
 type Comparison = { introduced: Finding[]; resolved: Finding[]; introduced_count: number; resolved_count: number; unchanged_count: number; note: string }
 type ReviewStatus = 'open' | 'investigating' | 'false_positive' | 'accepted_risk'
 type Review = { finding_index: number; status: ReviewStatus; note: string }
+type ReviewEvent = { id: string; status: ReviewStatus; note: string; event_type: string; created_at: string }
 
 const API = '/api'
 
@@ -56,6 +57,7 @@ export default function App() {
   const [baselineId, setBaselineId] = useState('')
   const [comparison, setComparison] = useState<Comparison | null>(null)
   const [reviews, setReviews] = useState<Record<number, Review>>({})
+  const [reviewHistory, setReviewHistory] = useState<Record<string, ReviewEvent[]>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -86,7 +88,7 @@ export default function App() {
   }, [token])
 
   useEffect(() => { void loadScans() }, [loadScans])
-  useEffect(() => { setBaselineId(''); setComparison(null) }, [selected?.id])
+  useEffect(() => { setBaselineId(''); setComparison(null); setReviewHistory({}) }, [selected?.id])
   useEffect(() => {
     if (!selected || !token) return
     let cancelled = false
@@ -178,6 +180,7 @@ export default function App() {
       )
       setReviews(current => ({ ...current, [index]: saved }))
       setNotice('Finding review saved.')
+      setReviewHistory({})
     } catch (err) { setError((err as Error).message) }
   }
 
@@ -187,6 +190,17 @@ export default function App() {
     setToken(''); setScans([]); setSelected(null); setError(''); setNotice('')
     setGithubToken(''); setPassword(''); setRepoUrl(''); setAffectedFile('')
     setReviews({}); setComparison(null); setBaselineId('')
+  }
+
+  const loadReviewHistory = async (index: number) => {
+    if (!selected) return
+    const historyKey = `${selected.id}:${index}`
+    try {
+      const data = await request<{ events: ReviewEvent[] }>(
+        `/analysis/results/${selected.id}/findings/${index}/history`, token,
+      )
+      setReviewHistory(current => ({ ...current, [historyKey]: data.events }))
+    } catch (err) { setError((err as Error).message) }
   }
 
   if (!token) return (
@@ -297,6 +311,15 @@ export default function App() {
                       } }))} /></label>
                     <button className="secondary" onClick={() => void saveReview(index)}>Save review</button>
                   </div>
+                  <button className="secondary" onClick={() => void loadReviewHistory(index)}>View review history</button>
+                  {reviewHistory[`${selected.id}:${index}`] && <ol aria-label={`Review history for finding ${index + 1}`}>
+                    {reviewHistory[`${selected.id}:${index}`].length === 0 && <li>No review history recorded.</li>}
+                    {reviewHistory[`${selected.id}:${index}`].map(event => <li key={event.id}>
+                      <strong>{event.status.replace(/_/g, ' ')}</strong> · {new Date(event.created_at + (event.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}
+                      {event.event_type === 'baseline_import' && ' · Imported baseline'}
+                      <p>{event.note || 'No note'}</p>
+                    </li>)}
+                  </ol>}
                 </article>)}
             </> : <p className="muted">Select a scan to see its evidence.</p>}
           </section>

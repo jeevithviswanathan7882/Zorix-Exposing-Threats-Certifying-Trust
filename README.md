@@ -92,6 +92,8 @@ These 1920 × 1080 wallpaper-size screenshots show the original Zorix red/black 
 
 The backend tests exercise ownership and report escaping through FastAPI with a real test database. The frontend tests cover sign-in, session expiry, credential cleanup, scan submission, evidence, review controls, and comparison. The current local suite has **18 backend tests and 6 frontend tests**. CI also exercises the React scan, review, and comparison flow in Chromium with deterministic API fixtures.
 
+Review decisions preserve their history: click **View review history** below a finding to see previous statuses and notes. Upgraded databases import the last known decision as an explicitly labeled baseline; they do not invent earlier history.
+
 ## How a scan works
 
 ```mermaid
@@ -182,7 +184,7 @@ The screenshot generator needs a local Chromium executable and the running front
 - **Repository size:** scans are bounded to 100 supported files, 200 KB each, and 2 MB total. Truncated Git trees and over-limit repositories fail rather than yield a partial clean result.
 - **External API:** fetching source requires GitHub API access. Private repositories and larger scans may require a token; GitHub rate limits still apply.
 - **Operations:** scans run in the API process with two slots. There is no background queue, per-user quota, or retention policy yet.
-- **Review history:** the current review row stores the latest status and note, not an immutable audit trail.
+- **Review history:** each saved decision also creates an owner-scoped audit event. SQLite and PostgreSQL triggers reject updates and deletes to events. Database administrators can still alter schema or disable triggers; external tamper-proof archival is not included.
 - **Dependencies:** Semgrep's isolated environment currently has five documented advisories across two pinned dependencies. See [SECURITY.md](SECURITY.md) for reachability and review dates.
 - **Production:** migrations are available, but there is no public deployment workflow, TLS termination, or managed secret store. The local Compose stack is for development.
 
