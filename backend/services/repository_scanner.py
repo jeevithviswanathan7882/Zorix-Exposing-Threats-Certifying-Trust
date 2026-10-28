@@ -93,7 +93,10 @@ async def fetch_repository_snapshot(owner: str, repo: str, token: str | None = N
             content = base64.b64decode("".join(encoded.split()), validate=True)
             if len(content) > MAX_FILE_BYTES:
                 raise ValueError("GitHub blob exceeds the file limit")
-            files[path] = content.decode("utf-8", errors="replace")
+            try:
+                files[path] = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"Source file is not UTF-8 encoded: {path}") from exc
             blob_shas[path] = sha
         if sum(len(content.encode("utf-8")) for content in files.values()) > MAX_TOTAL_BYTES:
             raise ValueError("Downloaded source exceeds the repository limit")

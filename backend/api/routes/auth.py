@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import timedelta
 from backend.database import get_db
 from backend.schemas import UserCreate, UserLogin, UserResponse, TokenResponse
 from backend.services import UserService
@@ -49,7 +48,6 @@ async def login(user_login: UserLogin, session: AsyncSession = Depends(get_db)):
     # Create access token
     access_token = create_access_token(
         data={"sub": str(user.id), "role": user.role},
-        expires_delta=timedelta(minutes=30),
     )
 
     return TokenResponse(access_token=access_token, user=user)

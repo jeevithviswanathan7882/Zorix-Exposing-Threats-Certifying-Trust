@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, computed_field
 from functools import lru_cache
 from typing import Optional
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -91,10 +92,11 @@ class Settings(BaseSettings):
     def DATABASE_URL(self) -> str:
         """Construct database URL."""
         if self.DATABASE_TYPE == "postgres":
-            return (
-                f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
-                f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-            )
+            return URL.create(
+                "postgresql+asyncpg", username=self.POSTGRES_USER,
+                password=self.POSTGRES_PASSWORD, host=self.POSTGRES_HOST,
+                port=self.POSTGRES_PORT, database=self.POSTGRES_DB,
+            ).render_as_string(hide_password=False)
         else:
             # SQLite for local development
             return "sqlite+aiosqlite:///./app.db"

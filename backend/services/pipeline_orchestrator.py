@@ -28,6 +28,7 @@ settings = get_settings()
 RULES_PATH = Path(__file__).resolve().parents[2] / "security" / "semgrep_rules.yaml"
 SUPPORTED_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx"}
 MAX_SOURCE_BYTES = 200_000
+FETCH_DEADLINE_SECONDS = 60
 
 # Kept for the WebSocket route; scan results are currently returned by HTTP.
 _ws_connections: dict[str, set] = {}
@@ -100,7 +101,11 @@ async def fetch_source(owner: str, repo: str, path: str, token: str | None = Non
     blob_sha = data.get("sha", "")
     if not isinstance(blob_sha, str) or not SHA_PATTERN.fullmatch(blob_sha):
         raise ValueError("GitHub did not return a valid blob SHA")
-    return source.decode("utf-8", errors="replace"), blob_sha, commit_sha
+    try:
+        decoded = source.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Source file is not UTF-8 encoded") from exc
+    return decoded, blob_sha, commit_sha
 
 
 def run_semgrep(source: str, filename: str) -> dict:
@@ -146,7 +151,13 @@ class VulnerabilityPipeline:
         if db is None or user_id is None:
             raise ValueError("A database session and authenticated user are required")
         owner, repo, path = validate_target(repo_url, affected_file)
-        source, blob_sha, commit_sha = await fetch_source(owner, repo, path, github_token or settings.GITHUB_TOKEN)
+        try:
+            source, blob_sha, commit_sha = await asyncio.wait_for(
+                fetch_source(owner, repo, path, github_token or settings.GITHUB_TOKEN),
+                timeout=FETCH_DEADLINE_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise ValueError("GitHub source fetch exceeded the 60-second time limit; retry later") from exc
         scan = await asyncio.to_thread(run_semgrep, source, path)
         return await self._record_scan(
             db, user_id, owner, repo, path, vulnerability_type, affected_line,
@@ -160,9 +171,13 @@ class VulnerabilityPipeline:
         if db is None or user_id is None:
             raise ValueError("A database session and authenticated user are required")
         owner, repo, _ = validate_target(repo_url, "placeholder.py")
-        commit_sha, files, blob_shas = await fetch_repository_snapshot(
-            owner, repo, github_token or settings.GITHUB_TOKEN
-        )
+        try:
+            commit_sha, files, blob_shas = await asyncio.wait_for(
+                fetch_repository_snapshot(owner, repo, github_token or settings.GITHUB_TOKEN),
+                timeout=FETCH_DEADLINE_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise ValueError("GitHub snapshot fetch exceeded the 60-second time limit; retry or scan one file") from exc
         scan = await asyncio.to_thread(scan_files, files)
         return await self._record_scan(
             db, user_id, owner, repo, "(repository)", "REPOSITORY_SCAN", None,

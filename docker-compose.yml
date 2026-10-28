@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: zorix
       POSTGRES_USER: zorix_user
-      POSTGRES_PASSWORD: zorix_password
+      POSTGRES_PASSWORD: ${ZORIX_DB_PASSWORD:-zorix_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -26,8 +26,10 @@ services:
     container_name: zorix_backend
     env_file:
       - backend/.env.dev
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    environment:
+      POSTGRES_PASSWORD: ${ZORIX_DB_PASSWORD:-zorix_password}
+      SECRET_KEY: ${ZORIX_SECRET_KEY:-your-super-secret-key-change-this-in-production-12345}
+      DEBUG: ${ZORIX_DEBUG:-true}
     volumes:
       - reports_data:/app/reports
       - logs_data:/app/logs

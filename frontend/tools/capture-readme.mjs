@@ -1,5 +1,6 @@
 import { chromium } from 'playwright-core'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -26,7 +27,7 @@ const scans = [
 ]
 
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+  executablePath: process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : chromium.executablePath()),
   headless: true,
   args: ['--no-sandbox'],
 })
@@ -89,6 +90,14 @@ try {
   await rm(path.join(outputDir, '06-mobile-evidence.png'), { force: true })
 } finally {
   await browser.close()
+}
+
+for (const name of ['01-sign-in.png', '02-scan-overview.png', '03-finding-review.png',
+  '04-scan-comparison.png', '05-file-scan-form.png', '06-scan-history.png']) {
+  const png = await readFile(path.join(outputDir, name))
+  if (png.readUInt32BE(16) !== 1920 || png.readUInt32BE(20) !== 1080) {
+    throw new Error(`${name} must be 1920 x 1080`)
+  }
 }
 
 console.log(`Saved Zorix UI screenshots to ${outputDir}`)

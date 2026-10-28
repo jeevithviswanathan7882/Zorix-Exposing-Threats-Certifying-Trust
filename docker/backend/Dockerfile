@@ -16,6 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/scanner-requirements.txt ./scanner-requirements.txt
 RUN python -m venv /opt/semgrep \
     && /opt/semgrep/bin/python -m pip install --no-cache-dir -r scanner-requirements.txt
+# Build tools and Git are unnecessary for the HTTP-based runtime. Refresh the
+# packaging tool's vendored dependencies before removing build-only packages.
+RUN python -m pip install --no-cache-dir --upgrade setuptools==84.2.1 \
+    && /opt/semgrep/bin/python -m pip install --no-cache-dir --upgrade setuptools==84.2.1 \
+    && apt-get purge -y --auto-remove gcc libpq-dev git \
+    && rm -rf /var/lib/apt/lists/*
 ENV SEMGREP_PATH=/opt/semgrep/bin/semgrep
 RUN groupadd --system --gid 10001 zorix \
     && useradd --system --uid 10001 --gid zorix --create-home --home-dir /home/zorix zorix \

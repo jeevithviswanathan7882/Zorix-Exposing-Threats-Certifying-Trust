@@ -87,9 +87,10 @@ These 1920 × 1080 wallpaper-size screenshots show the original Zorix red/black 
 | Actual static analysis | Local Semgrep rules for Python, JavaScript, and TypeScript | `test_semgrep_reports_real_rule_and_clean_file`, `test_repository_semgrep_preserves_relative_paths` |
 | Private results and reports | Owner checks in the API, including SARIF and reviews | `test_authentication_and_scan_ownership` |
 | Finding triage and scan comparison | Stored review status and note; same-scope comparison | `test_authentication_and_scan_ownership`, `test_scan_comparison_tracks_duplicate_findings_and_failed_scans` |
-| CI and container hardening | Tests, dependency audits, Trivy secret/configuration gate, image builds; non-root app containers | [GitHub Actions](https://github.com/rj-karan/Zorix-Exposing-Threats-Certifying-Trust/actions/workflows/ci.yml) and a local Docker smoke test |
+| CI and container hardening | Browser flow, dependency audits, Trivy configuration and image gates, CycloneDX SBOMs; non-root app containers | [GitHub Actions](https://github.com/rj-karan/Zorix-Exposing-Threats-Certifying-Trust/actions/workflows/ci.yml), downloadable `image-security-evidence` artifacts, and a local Docker smoke test |
+| Database migrations | Alembic initial schema and drift check | `test_database_migrations_create_current_schema` |
 
-The backend tests exercise ownership and report escaping through FastAPI with a real test database. The frontend tests cover sign-in, scan submission, evidence, review controls, and comparison. The current local suite has **13 backend tests and 4 frontend tests**.
+The backend tests exercise ownership and report escaping through FastAPI with a real test database. The frontend tests cover sign-in, session expiry, credential cleanup, scan submission, evidence, review controls, and comparison. The current local suite has **18 backend tests and 6 frontend tests**. CI also exercises the React scan, review, and comparison flow in Chromium with deterministic API fixtures.
 
 ## How a scan works
 
@@ -103,7 +104,9 @@ flowchart LR
   Evidence --> Export[HTML and SARIF]
 ```
 
-Repository scans accept up to **100 supported files**, **200 KB per file**, and **2 MB total**. Supported extensions are `.py`, `.js`, `.jsx`, `.ts`, and `.tsx`. Generated and dependency directories are excluded. If the GitHub tree is truncated or a limit is exceeded, the scan fails explicitly; it does not report partial coverage as a complete result. The API runs at most two scans at once per process and returns 429 when both slots are busy.
+Repository scans accept up to **100 supported files**, **200 KB per file**, and **2 MB total**. Supported extensions are `.py`, `.js`, `.jsx`, `.ts`, and `.tsx`; source must be valid UTF-8. Generated and dependency directories are excluded. If the GitHub tree is truncated, source cannot be decoded, or a limit is exceeded, the scan fails explicitly; it does not report partial coverage as a complete result. The API runs at most two scans at once per process and returns 429 when both slots are busy.
+
+GitHub fetching has a 60-second overall deadline. Semgrep has a separate 90-second file or 120-second repository deadline. The frontend proxy allows 240 seconds for the API response so a bounded scan can finish before the proxy times out.
 
 Semgrep results retain the rule ID, file, line, severity, and message. A match is not proof of reachability or exploitability. A scan with zero matches does not prove the code is secure. Read [project scope and portfolio evidence](docs/PROJECT_SCOPE.md) for a role-by-role view of what this project demonstrates.
 
@@ -113,7 +116,7 @@ Semgrep results retain the rule ID, file, line, severity, and message. A match i
 - Results, HTML reports, SARIF downloads, finding reviews, and comparisons all require authentication and owner checks. HTML report text is escaped.
 - Per-scan GitHub tokens and fetched source contents are not stored in scan records. Semgrep metrics and version checks are disabled.
 - The API and frontend containers run as non-root users. Compose does not mount the Docker socket, and its ports bind to localhost by default.
-- CI runs `pip-audit`, `npm audit`, Trivy high/critical secret and configuration checks, tests, and Docker builds. Two scanner dependency exceptions are recorded in [SECURITY.md](SECURITY.md).
+- CI runs `pip-audit`, `npm audit`, Trivy secret/configuration checks, tests, a browser flow, and Docker builds. Each built image gets a CycloneDX SBOM and a full vulnerability report; high/critical image findings with available fixes fail CI, subject to the individually reviewed exceptions in [SECURITY.md](SECURITY.md). Unfixed upstream findings remain in the reports.
 
 There is no exploit executor in the active application. Zorix reports no confirmed vulnerabilities and no CVSS score.
 
@@ -133,7 +136,7 @@ The Compose file is a **development setup**. Review these settings before puttin
 | `GITHUB_TOKEN` | Use a token with only the repository access needed for your scans. |
 | Backups | Back up the PostgreSQL and report named volumes together. |
 
-The current repository does not include a production deployment or database migration workflow. Do not treat the local Compose defaults as production-ready.
+Compose applies Alembic migrations before starting the API. To run the API outside Docker, run `.venv/bin/alembic -c backend/alembic.ini upgrade head` before Uvicorn. **Back up an existing database before upgrading.** The initial migration can adopt the previous `create_all` schema, adding the finding-review table if needed; it rejects an unexpected or partial schema instead of silently stamping it. Local Compose secrets can be overridden with `ZORIX_DB_PASSWORD`, `ZORIX_SECRET_KEY`, and `ZORIX_DEBUG=false`; the Compose stack still binds only to localhost and is not a public deployment recipe.
 
 ## Development and checks
 
@@ -147,6 +150,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m pip install pytest
 python3.11 -m venv .scanner-venv
 .scanner-venv/bin/python -m pip install -r backend/scanner-requirements.txt
+.venv/bin/alembic -c backend/alembic.ini upgrade head
 SEMGREP_PATH=.scanner-venv/bin/semgrep .venv/bin/uvicorn backend.main:app --reload --port 8000
 ```
 
@@ -177,8 +181,8 @@ The screenshot generator needs a local Chromium executable and the running front
 - **External API:** fetching source requires GitHub API access. Private repositories and larger scans may require a token; GitHub rate limits still apply.
 - **Operations:** scans run in the API process with two slots. There is no background queue, per-user quota, or retention policy yet.
 - **Review history:** the current review row stores the latest status and note, not an immutable audit trail.
-- **Dependencies:** Semgrep's isolated environment currently has two documented pinned-dependency advisories. See [SECURITY.md](SECURITY.md).
-- **Production:** there is no migration or public deployment workflow. Automated browser tests are not yet part of CI; the UI has component tests and reproducible screenshot captures.
+- **Dependencies:** Semgrep's isolated environment currently has five documented advisories across two pinned dependencies. See [SECURITY.md](SECURITY.md) for reachability and review dates.
+- **Production:** migrations are available, but there is no public deployment workflow, TLS termination, or managed secret store. The local Compose stack is for development.
 
 ## Where things are
 

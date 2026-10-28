@@ -20,7 +20,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_settings
-from backend.database import init_db
 
 settings = get_settings()
 
@@ -34,6 +33,15 @@ logging.basicConfig(
 logger = logging.getLogger("zorix")
 
 
+def validate_runtime_secret() -> None:
+    """Refuse known development keys when debug mode is disabled."""
+    if not settings.DEBUG and (len(settings.SECRET_KEY) < 32 or settings.SECRET_KEY in {
+        "your-secret-key-change-in-production", "change-this-to-a-random-secret-key",
+        "your-super-secret-key-change-this-in-production-12345",
+    }):
+        raise RuntimeError("Set a unique SECRET_KEY before starting Zorix")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle — startup and shutdown."""
@@ -41,14 +49,9 @@ async def lifespan(app: FastAPI):
     logger.info("Zorix static analysis service starting")
     logger.info("=" * 60)
 
-    if not settings.DEBUG and settings.SECRET_KEY in {
-        "your-secret-key-change-in-production", "change-this-to-a-random-secret-key"
-    }:
-        raise RuntimeError("Set a unique SECRET_KEY before starting Zorix")
+    validate_runtime_secret()
 
-    # Create tables
-    await init_db()
-    logger.info("Database initialized")
+    logger.info("Database schema is managed by Alembic migrations")
 
     # Create required directories
     for d in [settings.REPORTS_DIR, settings.LOGS_DIR]:

@@ -3,17 +3,85 @@
 import asyncio
 import base64
 import os
+import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.engine import make_url
 
 from backend.api.routes import analysis as analysis_routes
 from backend.database import Base, get_db
 from backend.main import app
+from backend import main as main_module
 from backend.services import pipeline_orchestrator as pipeline_module
+from backend.models import GUID
+from backend.config import Settings
+from backend.core.security import create_access_token
+
+
+def test_uuid_type_uses_the_database_dialect():
+    assert str(GUID().compile(dialect=sqlite.dialect())) == 'CHAR(36)'
+    assert str(GUID().compile(dialect=postgresql.dialect())) == 'UUID'
+
+
+def test_database_password_is_url_encoded():
+    password = 'test@password:with/slashes%and#symbols'
+    settings = Settings(_env_file=None, DATABASE_TYPE='postgres', POSTGRES_PASSWORD=password)
+    assert make_url(settings.DATABASE_URL).password == password
+
+
+def test_production_refuses_development_secret(monkeypatch):
+    monkeypatch.setattr(main_module.settings, 'DEBUG', False)
+    monkeypatch.setattr(main_module.settings, 'SECRET_KEY',
+                        'your-super-secret-key-change-this-in-production-12345')
+    with pytest.raises(RuntimeError, match='unique SECRET_KEY'):
+        main_module.validate_runtime_secret()
+
+
+def test_database_migrations_create_current_schema(tmp_path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'migrated.db'}"
+    env = {**os.environ, "ALEMBIC_DATABASE_URL": database_url}
+    root = Path(__file__).resolve().parents[1]
+    for command in ("upgrade", "check"):
+        args = [sys.executable, "-m", "alembic", "-c", "backend/alembic.ini", command]
+        if command == "upgrade":
+            args.append("head")
+        result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr or result.stdout
+
+    # A database initialized by the previous create_all flow is adopted only
+    # when it already has the exact current table and column set.
+    legacy_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
+    async def create_legacy_schema():
+        engine = create_async_engine(legacy_url)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+    asyncio.run(create_legacy_schema())
+    with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DROP TABLE finding_reviews')
+    env["ALEMBIC_DATABASE_URL"] = legacy_url
+    for command in ("upgrade", "check"):
+        args = [sys.executable, "-m", "alembic", "-c", "backend/alembic.ini", command]
+        if command == "upgrade":
+            args.append("head")
+        result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr or result.stdout
+
+    with sqlite3.connect(tmp_path / 'legacy.db') as connection:
+        connection.execute('DELETE FROM alembic_version')
+        connection.execute('ALTER TABLE users ADD COLUMN unexpected TEXT')
+    result = subprocess.run(
+        [sys.executable, '-m', 'alembic', '-c', 'backend/alembic.ini', 'upgrade', 'head'],
+        cwd=root, env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode != 0
+    assert 'columns differ' in result.stderr
 
 
 def test_target_validation_rejects_arbitrary_hosts_and_traversal():
@@ -28,6 +96,27 @@ def test_target_validation_rejects_arbitrary_hosts_and_traversal():
     ):
         with pytest.raises(ValueError):
             pipeline_module.validate_target(repo_url, path)
+
+
+def test_github_fetch_deadline_covers_both_scan_modes(monkeypatch):
+    async def slow_fetch(*args, **kwargs):
+        await asyncio.sleep(10)
+    monkeypatch.setattr(pipeline_module, 'FETCH_DEADLINE_SECONDS', 0.001)
+    monkeypatch.setattr(pipeline_module, 'fetch_source', slow_fetch)
+    monkeypatch.setattr(pipeline_module, 'fetch_repository_snapshot', slow_fetch)
+
+    async def scenario():
+        pipeline = pipeline_module.VulnerabilityPipeline()
+        with pytest.raises(ValueError, match='time limit'):
+            await pipeline.run_full_pipeline(
+                'https://github.com/example/project', 'UNSPECIFIED', 'app.py',
+                db=object(), user_id='test-user',
+            )
+        with pytest.raises(ValueError, match='time limit'):
+            await pipeline.run_repository_pipeline(
+                'https://github.com/example/project', db=object(), user_id='test-user',
+            )
+    asyncio.run(scenario())
 
 
 def test_semgrep_reports_real_rule_and_clean_file(monkeypatch):
@@ -47,6 +136,7 @@ def test_single_file_fetch_uses_pinned_commit(monkeypatch):
     commit_sha = "a" * 40
     blob_sha = "b" * 40
     requested_ref = []
+    source_bytes = b"print('hello')\n"
 
     def handler(request):
         if request.url.path == "/repos/example/project":
@@ -57,7 +147,7 @@ def test_single_file_fetch_uses_pinned_commit(monkeypatch):
             requested_ref.append(request.url.params.get("ref"))
             return httpx.Response(200, json={"type": "file", "encoding": "base64",
                                              "sha": blob_sha,
-                                             "content": base64.b64encode(b"print('hello')\n").decode() + "\n"})
+                                             "content": base64.b64encode(source_bytes).decode() + "\n"})
         return httpx.Response(404)
 
     client_type = httpx.AsyncClient
@@ -66,6 +156,9 @@ def test_single_file_fetch_uses_pinned_commit(monkeypatch):
     source, blob, commit = asyncio.run(pipeline_module.fetch_source("example", "project", "src/app.py"))
     assert (source, blob, commit) == ("print('hello')\n", blob_sha, commit_sha)
     assert requested_ref == [commit_sha]
+    source_bytes = b"\xff\xfe"
+    with pytest.raises(ValueError, match="UTF-8"):
+        asyncio.run(pipeline_module.fetch_source("example", "project", "src/app.py"))
 
 
 def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monkeypatch):
@@ -76,6 +169,7 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
     requested = []
     truncated = False
     rate_limited = False
+    blob_content = b"print('hello')\n"
 
     def handler(request):
         requested.append(str(request.url))
@@ -92,7 +186,7 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
             ]})
         if request.url.path.endswith(f"/git/blobs/{blob_sha}"):
             return httpx.Response(200, json={"sha": blob_sha, "encoding": "base64",
-                                             "content": base64.b64encode(b"print('hello')\n").decode() + "\n"})
+                                             "content": base64.b64encode(blob_content).decode() + "\n"})
         return httpx.Response(404)
 
     client_type = httpx.AsyncClient
@@ -101,7 +195,7 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
                         lambda **kwargs: client_type(transport=transport, **kwargs))
 
     async def scenario():
-        nonlocal truncated, rate_limited
+        nonlocal truncated, rate_limited, blob_content
         sha, files, blob_shas = await repository_scanner.fetch_repository_snapshot("example", "project")
         assert sha == commit_sha
         assert files == {"src/app.py": "print('hello')\n"}
@@ -115,6 +209,11 @@ def test_repository_snapshot_is_commit_pinned_and_rejects_incomplete_trees(monke
         monkeypatch.setattr(repository_scanner, "MAX_FILES", 0)
         with pytest.raises(ValueError, match="more than 0"):
             await repository_scanner.fetch_repository_snapshot("example", "project")
+        monkeypatch.setattr(repository_scanner, "MAX_FILES", 100)
+        blob_content = b"\xff\xfe"
+        with pytest.raises(ValueError, match="UTF-8"):
+            await repository_scanner.fetch_repository_snapshot("example", "project")
+        blob_content = b"print('hello')\n"
         rate_limited = True
         with pytest.raises(ValueError, match="rate limit"):
             await repository_scanner.fetch_repository_snapshot("example", "project")
@@ -186,6 +285,10 @@ def test_authentication_and_scan_ownership(tmp_path, monkeypatch):
         app.dependency_overrides[get_db] = override_db
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+                malformed_subject = create_access_token({"sub": "not-a-user-id"})
+                assert (await client.get('/api/analysis/results', headers={
+                    'Authorization': f'Bearer {malformed_subject}',
+                })).status_code == 401
                 tokens = []
                 for address in ("alice@example.com", "bob@example.com"):
                     register = await client.post("/api/auth/register", json={

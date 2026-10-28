@@ -15,6 +15,34 @@ describe('Zorix frontend', () => {
     expect(screen.getByText('New here? Create an account')).toBeTruthy()
   })
 
+  it('returns to sign in when an existing session expires', async () => {
+    localStorage.setItem('zorix_token', 'expired-token')
+    localStorage.setItem('zorix_email', 'analyst@example.com')
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 401, json: async () => ({ detail: 'Invalid token' }),
+    })))
+    render(<App />)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toBeTruthy())
+    expect(screen.getByRole('alert').textContent).toContain('Session expired')
+    expect(localStorage.getItem('zorix_token')).toBeNull()
+  })
+
+  it('clears a per-scan GitHub token across sign out and sign in', async () => {
+    localStorage.setItem('zorix_token', 'first-session')
+    localStorage.setItem('zorix_email', 'analyst@example.com')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.endsWith('/auth/login') ? { access_token: 'second-session' } : { results: [] },
+    })))
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('GitHub token (optional)'), { target: { value: 'private-token' } })
+    fireEvent.click(screen.getByRole('button', { name: /Sign out/ }))
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'ExamplePassword123!' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(screen.getByLabelText('GitHub token (optional)')).toBeTruthy())
+    expect((screen.getByLabelText('GitHub token (optional)') as HTMLInputElement).value).toBe('')
+  })
+
   it('shows recorded evidence without calling it a confirmed exploit', async () => {
     localStorage.setItem('zorix_token', 'test-token')
     localStorage.setItem('zorix_email', 'analyst@example.com')

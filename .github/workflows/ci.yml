@@ -26,8 +26,13 @@ jobs:
       - name: Audit API dependencies
         run: pip-audit -r backend/requirements.txt --no-deps --disable-pip
       - name: Audit scanner dependencies
-        # Semgrep 1.182.1 pins these two versions; see SECURITY.md.
-        run: pip-audit -r backend/scanner-requirements.txt --no-deps --disable-pip --ignore-vuln CVE-2026-59951 --ignore-vuln CVE-2026-114603
+        # Individually reviewed exceptions for unused MCP transports and disabled
+        # telemetry in Semgrep's dependency pins; see SECURITY.md.
+        run: >-
+          pip-audit -r backend/scanner-requirements.txt --no-deps --disable-pip
+          --ignore-vuln CVE-2026-59951 --ignore-vuln CVE-2026-114603
+          --ignore-vuln CVE-2026-116684 --ignore-vuln CVE-2026-116685
+          --ignore-vuln CVE-2026-116686
       - name: Compile backend
         run: python -m compileall -q backend
       - name: Test backend and scanner
@@ -56,15 +61,65 @@ jobs:
         run: npm test
       - name: Type-check and build frontend
         run: npm run build
+      - name: Install browser for UI smoke test
+        run: npx playwright-core install --with-deps chromium
+      - name: Exercise scan, review, and comparison in a browser
+        run: |
+          npm run dev -- --host 127.0.0.1 > /tmp/zorix-vite.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run screenshots
 
   containers:
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: zorix-ci
+      ZORIX_DB_PORT: '15432'
     steps:
       - uses: actions/checkout@v7
       - name: Validate Compose configuration
         run: docker compose config --quiet
       - name: Build application images
         run: docker compose build backend frontend
+      - name: Verify migrations on a fresh PostgreSQL database
+        run: |
+          docker compose up -d --wait postgres
+          docker compose run --rm --no-deps --entrypoint alembic backend -c backend/alembic.ini upgrade head
+          docker compose run --rm --no-deps --entrypoint alembic backend -c backend/alembic.ini check
+      - name: Generate image SBOMs, report vulnerabilities, and gate fixes
+        run: |
+          mkdir -p image-reports
+          gate_status=0
+          for service in backend frontend; do
+            docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$PWD/image-reports:/reports" \
+              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+              image --format cyclonedx --output "/reports/$service.cdx.json" "zorix-ci-$service"
+            docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$PWD/image-reports:/reports" \
+              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+              image --scanners vuln --format json --output "/reports/$service.vulnerabilities.json" "zorix-ci-$service"
+            docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              --volume "$PWD/security/trivy-image-exceptions:/exceptions:ro" \
+              aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+              image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /exceptions --exit-code 1 "zorix-ci-$service" || gate_status=1
+          done
+          exit "$gate_status"
+      - name: Save SBOM and vulnerability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-evidence
+          path: image-reports/
+          if-no-files-found: error
+      - name: Stop test database
+        if: always()
+        run: docker compose down
 
   configuration:
     runs-on: ubuntu-latest

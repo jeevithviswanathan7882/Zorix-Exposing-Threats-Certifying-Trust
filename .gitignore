@@ -8,6 +8,7 @@ venv/
 .scanner-venv/
 /tmp/
 /reports/
+/image-reports/
 __pycache__/
 *.pyc
 *.pyo

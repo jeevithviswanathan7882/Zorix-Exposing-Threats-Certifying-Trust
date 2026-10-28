@@ -6,6 +6,7 @@ from backend.core import decode_access_token
 from backend.models import User
 from backend.services import UserService
 import logging
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,9 @@ async def get_current_user(
         )
     
     # Extract user ID from payload
-    user_id = payload.get("sub")
-    if not user_id:
+    try:
+        user_id = UUID(payload.get("sub", ""))
+    except (ValueError, TypeError, AttributeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",

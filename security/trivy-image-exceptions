@@ -1,0 +1,8 @@
+# Semgrep 1.182.1 dependency pins. Review by 2026-11-28.
+# These features are unused in Zorix's fixed local `semgrep scan` invocation.
+# Full image reports retain these findings. See SECURITY.md for reachability.
+CVE-2026-59951
+CVE-2026-114603
+CVE-2026-116684
+CVE-2026-116685
+CVE-2026-116686

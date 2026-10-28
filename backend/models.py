@@ -3,7 +3,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.orm import relationship
 from backend.database import Base
-from backend.config import get_settings
 import uuid
 from datetime import datetime
 
@@ -16,24 +15,21 @@ class GUID(TypeDecorator):
     cache_ok = True
     
     def load_dialect_impl(self, dialect):
-        settings = get_settings()
-        if settings.DATABASE_TYPE == "postgres":
+        if dialect.name == "postgresql":
             return dialect.type_descriptor(UUID(as_uuid=True))
         return dialect.type_descriptor(CHAR(36))
     
     def process_bind_param(self, value, dialect):
-        settings = get_settings()
         if value is None:
             return value
-        if settings.DATABASE_TYPE == "postgres":
+        if dialect.name == "postgresql":
             return uuid.UUID(str(value))
         return str(value) if not isinstance(value, str) else value
     
     def process_result_value(self, value, dialect):
-        settings = get_settings()
         if value is None:
             return value
-        if settings.DATABASE_TYPE == "postgres":
+        if dialect.name == "postgresql":
             return value
         return uuid.UUID(value) if isinstance(value, str) else value
 

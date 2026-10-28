@@ -32,6 +32,11 @@ async function request<T>(path: string, token?: string, options?: RequestInit): 
     },
   })
   const body = await response.json().catch(() => ({}))
+  if (token && response.status === 401) {
+    localStorage.removeItem('zorix_token')
+    window.dispatchEvent(new Event('zorix:session-expired'))
+    throw new Error('Session expired. Sign in again.')
+  }
   if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`)
   return body as T
 }
@@ -53,6 +58,20 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  useEffect(() => {
+    const expireSession = () => {
+      setToken('')
+      setScans([])
+      setSelected(null)
+      setGithubToken('')
+      setPassword('')
+      setNotice('')
+      setError('Session expired. Sign in again.')
+    }
+    window.addEventListener('zorix:session-expired', expireSession)
+    return () => window.removeEventListener('zorix:session-expired', expireSession)
+  }, [])
 
   const loadScans = useCallback(async (preferLatest = false) => {
     if (!token) return
@@ -122,6 +141,11 @@ export default function App() {
       const response = await fetch(`${API}/analysis/reports/${id}/${format}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (response.status === 401) {
+        localStorage.removeItem('zorix_token')
+        window.dispatchEvent(new Event('zorix:session-expired'))
+        throw new Error('Session expired. Sign in again.')
+      }
       if (!response.ok) throw new Error(`Report request failed (${response.status})`)
       const url = URL.createObjectURL(await response.blob())
       const link = document.createElement('a')
@@ -159,7 +183,9 @@ export default function App() {
   const signOut = () => {
     localStorage.removeItem('zorix_token')
     localStorage.removeItem('zorix_email')
-    setToken(''); setScans([]); setSelected(null); setError('')
+    setToken(''); setScans([]); setSelected(null); setError(''); setNotice('')
+    setGithubToken(''); setPassword(''); setRepoUrl(''); setAffectedFile('')
+    setReviews({}); setComparison(null); setBaselineId('')
   }
 
   if (!token) return (
